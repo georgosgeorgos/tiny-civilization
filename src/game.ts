@@ -56,7 +56,7 @@ import { developmentStage, isUnlocked, specialtyFor, type DevelopmentStage } fro
 import { goalCopy, type SimulationConfig } from "./config";
 import { createCosmicSystem, type CosmicSystem } from "./cosmos";
 import { DIRECTIVE_COPY, directiveFromText, type Directive } from "./directive";
-import { SimulationEngine } from "./simulation/engine.ts";
+import { SimulationClient } from "./simulation/client.ts";
 
 type Person = {
   mesh: THREE.Group;
@@ -234,7 +234,7 @@ export class Game {
   private qualityFrames = 0;
   private cosmicMode = false;
   private readonly visualStyle: SimulationConfig["visualStyle"];
-  private readonly simulation: SimulationEngine;
+  private readonly simulation: SimulationClient;
 
   constructor(canvas: HTMLCanvasElement, config: SimulationConfig) {
     this.canvas = canvas;
@@ -246,7 +246,7 @@ export class Game {
     this.auto = config.auto;
     this.speed = config.speed;
     this.technology = config.technology === "advanced" ? 90 : config.technology === "developing" ? 30 : 0;
-    this.simulation = new SimulationEngine(config.seed, startingStores, this.technology);
+    this.simulation = new SimulationClient(config.seed, startingStores, this.technology);
     this.weatherUntil = config.temperament === "calm" ? 1.8 : config.temperament === "wild" ? 0.55 : 1.1;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.renderScale));
@@ -1643,11 +1643,13 @@ export class Game {
       moodPressure: (happiness - 50) / 50,
       disruption,
     });
-    this.food = simulated.stores.food;
-    this.wood = simulated.stores.wood;
-    this.gold = simulated.stores.gold;
-    this.technology = simulated.knowledge;
-    this.mood = Math.round((simulated.health * 0.45 + simulated.stability * 0.55) * 100);
+    if (simulated) {
+      this.food = simulated.stores.food;
+      this.wood = simulated.stores.wood;
+      this.gold = simulated.stores.gold;
+      this.technology = simulated.knowledge;
+      this.mood = Math.round((simulated.health * 0.45 + simulated.stability * 0.55) * 100);
+    }
 
     if (this.event === "migration" && !this.migrationResolved && this.food > 7 && folk.length < housing) {
       const home = [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.building === "hut" && tile.ready);
@@ -1755,7 +1757,7 @@ export class Game {
   private tryBirths(): void {
     const folk = this.citizens();
     const housing = this.housingOf("player");
-    if (this.food > folk.length * 1.7 && folk.length < housing && this.food > 4) {
+    if (this.simulation.snapshot.birthReadiness > 0.34 && folk.length < housing && this.food > 4) {
       const hut = [...this.tiles.values()].find(
         (tile) => tile.building === "hut" && tile.owner === "player" && tile.buildLeft <= 0,
       );
@@ -1786,9 +1788,9 @@ export class Game {
   }
 
   private tryHunger(): void {
-    if (this.citizens().length > 1 && this.food < 0.5) {
+    if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.58) {
       const gone = this.exileHungry(false);
-      if (gone) this.setHint("A villager left, seeking food beyond the isle.");
+      if (gone) this.setHint("Poor health and insecurity drove a villager to leave.");
       return;
     }
     for (const society of this.societies.values()) {

@@ -27,6 +27,7 @@ for (let day = 0; day < 12; day += 1) {
   scarcity.advance({ ...input, annualProduction: { food: 0, wood: 0, gold: 0 }, disruption: "drought" });
 }
 assert.ok(scarcity.snapshot.health < 0.55, "food scarcity and drought should reduce health");
+assert.ok(scarcity.snapshot.mortalityRisk > 0.5, "sustained scarcity should create demographic risk");
 
 const extraction = new SimulationEngine(12, { food: 10, wood: 10, gold: 10 });
 for (let day = 0; day < 24; day += 1) {

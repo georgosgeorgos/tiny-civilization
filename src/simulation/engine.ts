@@ -20,6 +20,8 @@ export class SimulationEngine {
       health: 0.72,
       stability: 0.62,
       knowledge,
+      birthReadiness: 0,
+      mortalityRisk: 0,
       lastFlow: { food: 0, wood: 0, gold: 0 },
     };
   }
@@ -68,6 +70,9 @@ export class SimulationEngine {
     this.state.health += (healthTarget - this.state.health) * 0.16;
     const noise = (this.random.next() - 0.5) * 0.012;
     this.state.stability = clamp01(this.state.stability + inputs.moodPressure * 0.015 - crowding * 0.08 - disaster * 0.12 + noise);
+    const spareHousing = inputs.housing <= 0 ? 0 : clamp01((inputs.housing - inputs.population) / Math.max(2, inputs.housing));
+    this.state.birthReadiness = clamp01((this.state.health - 0.5) * 1.8 + spareHousing * 0.65 + (this.state.stability - 0.5) * 0.35);
+    this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6);
 
     this.updateEcology(inputs.buildings, inputs.disruption);
     const institutions = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;

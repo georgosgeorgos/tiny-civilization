@@ -12,6 +12,8 @@ export type SimulationSnapshot = {
   health: number;
   stability: number;
   knowledge: number;
+  birthReadiness: number;
+  mortalityRisk: number;
   lastFlow: Stores;
 };
 
