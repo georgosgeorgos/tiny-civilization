@@ -1,0 +1,285 @@
+:root {
+  color-scheme: dark;
+  --ink: #f3efe4;
+  --muted: #c3d0c8;
+  --panel: rgba(8, 16, 22, 0.62);
+  --wood: #d4a574;
+  --mood: #f0a3c4;
+  --accent: #7ce0c2;
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Times New Roman", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #071018;
+  color: var(--ink);
+}
+
+#scene {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(ellipse at center, transparent 48%, rgba(4, 10, 16, 0.42) 100%);
+}
+
+.hud {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hud-top,
+.hud-bottom {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--panel);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(255, 236, 200, 0.12);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);
+}
+
+.hud-top {
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  padding: 12px 18px;
+  border-radius: 16px;
+}
+
+.hud-bottom {
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  padding: 10px;
+  border-radius: 16px;
+  align-items: flex-end;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+.new-world {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font: 600 11px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.new-world:hover { background: rgba(124, 224, 194, 0.18); border-color: var(--accent); }
+
+.setup {
+  width: min(440px, calc(100vw - 32px));
+  color: var(--ink);
+  background: #102128;
+  border: 1px solid rgba(255, 240, 210, 0.2);
+  border-radius: 18px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+  padding: 0;
+}
+
+.setup::backdrop { background: rgba(3, 9, 13, 0.68); backdrop-filter: blur(5px); }
+.setup form { padding: 24px; display: grid; gap: 14px; font-family: "Segoe UI", sans-serif; }
+.setup h1 { margin: -8px 0 0; font: 700 26px/1.1 "Iowan Old Style", Palatino, serif; }
+.eyebrow { color: var(--accent); margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.setup-copy { color: var(--muted); margin: 0 0 4px; font-size: 13px; line-height: 1.45; }
+.setup label { display: grid; gap: 5px; color: #e9dfd0; font-size: 12px; font-weight: 600; }
+.setup select { color: var(--ink); background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 8px; padding: 9px; font: inherit; }
+.setup .check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.setup-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.setup-actions button { border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 9px 12px; color: var(--ink); background: rgba(255,255,255,.06); cursor: pointer; font: 600 12px "Segoe UI", sans-serif; }
+.setup-actions .primary { color: #082017; background: var(--accent); border-color: var(--accent); }
+
+.stats {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+.stats span:nth-child(3) {
+  color: var(--gold);
+}
+
+.stats span:nth-child(4) {
+  color: var(--food);
+}
+
+.stats span:nth-child(5) {
+  color: var(--wood);
+}
+
+.stats span:nth-child(6) {
+  color: var(--mood);
+}
+
+.stats span:nth-child(7) {
+  color: #e8b896;
+}
+
+.stats span:nth-child(8) {
+  color: #b7d4c8;
+}
+
+.resource {
+  --level: 70%;
+  position: relative;
+  isolation: isolate;
+  padding: 4px 7px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.resource::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  width: var(--level);
+  opacity: 0.2;
+  background: currentColor;
+  transition: width 300ms ease, background-color 300ms ease;
+}
+
+.warning {
+  color: #ff9c8d !important;
+  animation: warning-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes warning-pulse {
+  50% { filter: brightness(1.35); }
+}
+
+.hud-hint {
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: "Segoe UI", sans-serif;
+  white-space: normal;
+  text-align: center;
+  max-width: min(720px, 70vw);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.tool {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 6px 8px;
+  min-width: 78px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool strong {
+  display: block;
+  font-size: 12px;
+}
+
+.tool span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.tool.active {
+  border-color: var(--accent);
+  background: rgba(124, 224, 194, 0.18);
+}
+
+.tool:focus-visible,
+.speeds button:focus-visible {
+  outline: 2px solid #fff4d5;
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .hud-top { align-items: flex-start; }
+  .stats { justify-content: flex-start; gap: 6px; }
+  .stats span:nth-child(1), .stats span:nth-child(2) { width: 100%; }
+  .hud-bottom { align-items: stretch; flex-direction: column; }
+  .tools { max-height: 116px; overflow-y: auto; }
+  .speeds { justify-content: space-between; }
+  .speeds button { padding: 8px 9px; }
+}
+
+.speeds {
+  display: flex;
+  gap: 6px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.speeds button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.speeds button.active {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #b7f3d8, var(--accent));
+  color: #082017;
+}
+
+.flash {
+  animation: flash 0.45s ease;
+}
+
+@keyframes flash {
+  50% {
+    color: #ff6b6b;
+  }
+}

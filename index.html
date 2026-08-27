@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tiny Civilization</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+      <div class="vignette"></div>
+      <header class="hud hud-top">
+        <div class="brand">Tiny Civilization</div>
+        <button type="button" id="new-world" class="new-world">New world</button>
+        <div class="stats">
+          <span id="stat-turn">Year 1 · Spring</span>
+          <span id="stat-clock">Morning 06:43 · Day 1</span>
+          <span id="stat-gold" class="resource">Gold 50</span>
+          <span id="stat-food" class="resource">Food 14</span>
+          <span id="stat-wood" class="resource">Wood 10</span>
+          <span id="stat-mood" class="resource">Mood 52</span>
+          <span id="stat-people">People 0</span>
+          <span id="stat-isles">Towns 0</span>
+        </div>
+      </header>
+        <p id="hint" class="hud hud-hint">Auto is growing the camp. G toggles Auto. Scroll to see the isles.</p>
+      <footer class="hud hud-bottom">
+        <div id="tools" class="tools"></div>
+        <div class="speeds">
+          <button type="button" id="auto" class="active">Auto</button>
+          <button type="button" data-speed="0">Pause</button>
+          <button type="button" data-speed="1">1×</button>
+          <button type="button" data-speed="2">2×</button>
+          <button type="button" data-speed="4" class="active">4×</button>
+          <button type="button" data-speed="8">8×</button>
+        </div>
+      </footer>
+    </div>
+    <dialog id="setup" class="setup">
+      <form id="setup-form" method="dialog">
+        <p class="eyebrow">Simulation setup</p>
+        <h1>Start a new world</h1>
+        <p class="setup-copy">Choose the pressure and direction of your civilization. The world keeps evolving after a goal is reached.</p>
+        <label>Starting stores<select name="resources"><option value="lean">Lean — a hard beginning</option><option value="standard" selected>Standard</option><option value="abundant">Abundant — build quickly</option></select></label>
+        <label>World temperament<select name="temperament"><option value="calm">Calm — longer weather cycles</option><option value="balanced" selected>Balanced</option><option value="wild">Wild — faster-changing forces</option></select></label>
+        <label>Milestone goal<select name="goal"><option value="survive">Survive — 20 people through winter</option><option value="prosper" selected>Prosper — reach 250 gold</option><option value="explore">Explore — settle 3 isles</option></select></label>
+        <label>Opening pace<select name="speed"><option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select></label>
+        <label class="check"><input name="auto" type="checkbox" checked /> Let the settlement build automatically</label>
+        <div class="setup-actions"><button type="button" id="setup-cancel">Cancel</button><button type="submit" class="primary">Begin simulation</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
