@@ -47,8 +47,12 @@ export class SimulationEngine {
     const yearPart = 1 / DAYS_PER_YEAR;
     this.reconcilePopulation(inputs.population);
     const foodNeed = inputs.population * 1.5 * yearPart;
-    const spoilage = this.state.stores.food * 0.018 * yearPart;
-    const maintenance = this.totalBuildings(inputs.buildings) * 0.08 * yearPart;
+    const infrastructure = clamp01(
+      inputs.infrastructure.roads * 0.035 + inputs.infrastructure.ports * 0.07 + inputs.infrastructure.tradeRoutes * 0.16,
+    );
+    // Better-connected settlements move and preserve staples more reliably, without tracking every cart.
+    const spoilage = this.state.stores.food * 0.018 * yearPart * (1 - infrastructure * 0.48);
+    const maintenance = this.totalBuildings(inputs.buildings) * 0.08 * yearPart * (1 - infrastructure * 0.16);
     const production = {
       food: inputs.annualProduction.food * this.state.ecology.soil * yearPart,
       wood: inputs.annualProduction.wood * this.state.ecology.forest * yearPart,
@@ -66,10 +70,10 @@ export class SimulationEngine {
     const foodSecurity = clamp01(this.state.stores.food / Math.max(2, inputs.population * 2.5));
     const crowding = inputs.population > inputs.housing ? 0.18 : 0;
     const disaster = inputs.disruption === "none" ? 0 : inputs.disruption === "storm" ? 0.04 : 0.09;
-    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 - crowding - disaster);
+    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 - crowding - disaster);
     this.state.health += (healthTarget - this.state.health) * 0.16;
     const noise = (this.random.next() - 0.5) * 0.012;
-    this.state.stability = clamp01(this.state.stability + inputs.moodPressure * 0.015 - crowding * 0.08 - disaster * 0.12 + noise);
+    this.state.stability = clamp01(this.state.stability + inputs.moodPressure * 0.015 + infrastructure * 0.008 - crowding * 0.08 - disaster * 0.12 + noise);
     const spareHousing = inputs.housing <= 0 ? 0 : clamp01((inputs.housing - inputs.population) / Math.max(2, inputs.housing));
     this.state.birthReadiness = clamp01((this.state.health - 0.5) * 1.8 + spareHousing * 0.65 + (this.state.stability - 0.5) * 0.35);
     this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6);

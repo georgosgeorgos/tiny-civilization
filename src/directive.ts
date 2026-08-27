@@ -8,15 +8,26 @@ export const DIRECTIVE_COPY: Record<Directive, string> = {
   culture: "Build a happier, more resilient society.", frontier: "Prepare for new frontiers.",
 };
 
-export function directiveFromText(text: string): Directive | null {
+/** Pull ordered, plain-language priorities from a single council instruction. */
+export function directivesFromText(text: string): Directive[] {
   const words = text.toLowerCase();
-  if (/food|farm|harvest|fish|hunger/.test(words)) return "food";
-  if (/grow|people|house|home|population/.test(words)) return "growth";
-  if (/gold|wealth|trade|market|industry|mine/.test(words)) return "wealth";
-  if (/happy|culture|faith|shrine|festival/.test(words)) return "culture";
-  if (/expand|frontier|island|explore|settle/.test(words)) return "frontier";
-  if (/balance|steady|mixed/.test(words)) return "balanced";
-  return null;
+  const matches: { directive: Directive; at: number }[] = [];
+  const add = (directive: Directive, pattern: RegExp) => {
+    const at = words.search(pattern);
+    if (at >= 0) matches.push({ directive, at });
+  };
+  add("food", /food|farm|harvest|fish|hunger|feed/);
+  add("growth", /grow|people|house|home|population|settle/);
+  add("wealth", /gold|wealth|trade|market|industry|mine|commerce/);
+  add("culture", /happy|culture|faith|shrine|festival|health|resilien/);
+  add("frontier", /expand|frontier|island|explore|colon/);
+  add("balanced", /balance|steady|mixed/);
+  matches.sort((a, b) => a.at - b.at);
+  return matches.filter((match, index) => matches.findIndex((other) => other.directive === match.directive) === index).map((match) => match.directive);
+}
+
+export function directiveFromText(text: string): Directive | null {
+  return directivesFromText(text)[0] ?? null;
 }
 
 export function priorityBuildings(directive: Directive): BuildingId[] {

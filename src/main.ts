@@ -10,8 +10,8 @@ if (!canvas) {
 const setup = document.querySelector<HTMLDialogElement>("#setup");
 const form = document.querySelector<HTMLFormElement>("#setup-form");
 const start = () => new Game(canvas, configFromSearch(window.location.search));
-if (window.location.search) start();
-else setup?.showModal();
+// A civilization should be observable immediately; setup is an optional new-world action.
+start();
 
 document.querySelector("#new-world")?.addEventListener("click", () => setup?.showModal());
 document.querySelector("#setup-cancel")?.addEventListener("click", () => setup?.close());
@@ -20,7 +20,7 @@ form?.addEventListener("submit", (event) => {
   const data = new FormData(form);
   const base = configFromSearch(new URLSearchParams({
     resources: String(data.get("resources")), temperament: String(data.get("temperament")),
-    goal: String(data.get("goal")), auto: data.get("auto") ? "on" : "off", speed: String(data.get("speed")),
+    goal: String(data.get("goal")), auto: "on", speed: String(data.get("speed")),
     technology: String(data.get("technology")),
   }).toString());
   const config = configFromPrompt(String(data.get("world-prompt")), base);

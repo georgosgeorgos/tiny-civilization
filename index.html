@@ -14,6 +14,7 @@
         <button type="button" id="new-world" class="new-world">New world</button>
         <div class="stats">
           <span id="stat-turn">Year 1 · Spring</span>
+          <span id="stat-goal">Milestone: prosperity</span>
           <span id="stat-clock">Morning 06:43 · Day 1</span>
           <span id="stat-gold" class="resource">Gold 50</span>
           <span id="stat-food" class="resource">Food 14</span>
@@ -21,25 +22,26 @@
           <span id="stat-mood" class="resource">Mood 52</span>
           <span id="stat-people">People 0</span>
           <span id="stat-isles">Towns 0</span>
+          <span id="stat-trade">Routes 0</span>
           <span id="stat-tech">Tech 1</span>
           <span id="stat-health" class="resource">Health 72</span>
           <span id="stat-land" class="resource">Land 90</span>
         </div>
       </header>
+      <aside class="hud observer" aria-live="polite">
+        <div class="observer-title">Civilization observer</div>
+        <ol id="activity-feed" class="activity-feed"></ol>
+        <p>Use World view to survey the societies; the log records every significant decision.</p>
+      </aside>
         <p id="hint" class="hud hud-hint">Auto is growing the camp. G toggles Auto. Scroll to see the isles.</p>
       <footer class="hud hud-bottom">
-        <div id="tools" class="tools"></div>
         <div class="zoom-controls" aria-label="Zoom controls"><span>View</span><button type="button" data-zoom="70">Local</button><button type="button" data-zoom="430">World</button><button type="button" data-zoom="1700">Space</button></div>
         <section class="council" aria-label="Council directives">
-          <div class="council-title">Council directive</div>
-          <div class="directive-buttons">
-            <button type="button" class="active" data-directive="balanced">Balance</button><button type="button" data-directive="food">Food</button><button type="button" data-directive="growth">Growth</button><button type="button" data-directive="wealth">Wealth</button><button type="button" data-directive="culture">Culture</button><button type="button" data-directive="frontier">Frontier</button>
-          </div>
-          <form id="directive-form"><input id="directive-input" aria-label="Council instruction" placeholder="Tell the council: secure food" /><button type="submit">Direct</button></form>
-          <div class="world-actions"><button type="button" id="frontier-charter">Frontier charter</button><button type="button" id="trade-pact">Trade pact</button><button type="button" id="rival-claim">Rival claim</button></div>
+          <div class="council-title">Steer the council</div>
+          <p id="council-order" class="council-order">The council is keeping the settlement balanced.</p>
+          <form id="directive-form"><input id="directive-input" aria-label="Council instruction" placeholder="e.g. secure food, then develop coastal trade" /><button type="submit">Send instruction</button></form>
         </section>
         <div class="speeds">
-          <button type="button" id="auto" class="active">Auto</button>
           <button type="button" data-speed="0">Pause</button>
           <button type="button" data-speed="1">1×</button>
           <button type="button" data-speed="2">2×</button>
@@ -61,7 +63,7 @@
         <label>Technology start<select name="technology"><option value="primitive" selected>Primitive — discover fundamentals</option><option value="developing">Developing — established craft</option><option value="advanced">Advanced — fast start, harder expectations</option></select></label>
         <label>Visual character<select name="style"><option value="natural" selected>Natural — warm, coastal world</option><option value="austere">Austere — subdued, northern world</option><option value="radiant">Radiant — vivid, high-contrast world</option></select></label>
         <label>Opening pace<select name="speed"><option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select></label>
-        <label class="check"><input name="auto" type="checkbox" checked /> Let the settlement build automatically</label>
+        <p class="prompt-help">The council manages building, diplomacy, and expansion autonomously. Use natural-language instructions to steer it.</p>
         <div class="setup-actions"><button type="button" id="setup-cancel">Cancel</button><button type="submit" class="primary">Begin simulation</button></div>
       </form>
     </dialog>

@@ -26,7 +26,9 @@ export function eraName(people: number, buildings: number): string {
   if (people < 8) return "Hamlet";
   if (people < 16) return "Village";
   if (people < 28) return "Town";
-  return "City";
+  if (people < 48) return "City";
+  if (people < 80) return "Metropolis";
+  return "Civilization";
 }
 
 export function chooseNextBuilding(
@@ -34,8 +36,8 @@ export function chooseNextBuilding(
   canBuild: (id: BuildingId) => boolean,
   directive: Directive = "balanced",
 ): BuildingId | null {
-  const { food, gold, wood, mood, people, housing, counts, buildingTotal } = snap;
-  if (buildingTotal >= 56) return null;
+  const { food, gold, wood, mood, people, housing, counts } = snap;
+  // Land, workforce, and stores are the natural limits—not an arbitrary building cap.
 
   const pick = (ids: BuildingId[]): BuildingId | null => {
     for (const id of ids) {

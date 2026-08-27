@@ -36,12 +36,14 @@ export type Biome =
   | "urban"
   | "plaza";
 export type Landmark = "none" | "vent" | "ruin" | "crystal" | "stone" | "mesa" | "oasis" | "tower" | "crane";
+export type Terrain = "coast" | "plain" | "hill" | "mountain";
 
 export type WorldSample = {
   land: true;
   kind: LandKind;
   biome: Biome;
   height: number;
+  terrain: Terrain;
   coast: boolean;
   buildable: boolean;
   landmark: Landmark;
@@ -220,11 +222,20 @@ export function sampleWorld(q: number, r: number): WorldSample | null {
     if (coast && n > 0.72) landmark = "crane";
   }
 
+  const terrain: Terrain = coast
+    ? "coast"
+    : biome === "snow" || height >= 1.28 || (island.kind === "volcano" && height > 1.6)
+      ? "mountain"
+      : height >= 0.84 || biome === "rock" || biome === "crystal"
+        ? "hill"
+        : "plain";
+
   return {
     land: true,
     kind: island.kind,
     biome,
     height,
+    terrain,
     coast,
     buildable,
     landmark,

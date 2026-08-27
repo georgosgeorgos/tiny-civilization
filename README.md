@@ -14,11 +14,11 @@ Open the local URL Vite prints (usually http://localhost:5173).
 
 ## Controls
 
-- Click a hex to place the selected building
-- Click a hex to place the selected building
-- 1–9 select buildings; hover a tile to see whether the choice is valid
-- Drag to orbit, scroll to zoom, and use WASD or arrow keys to travel
-- Space/P pauses; +/- changes simulation speed; G toggles automatic building
+- The council builds, expands, trades, and responds to shortages autonomously.
+- Steer it in plain language, for example: “secure food, then develop coastal trade.”
+- Instructions can contain ordered priorities; the council moves on when the current one is secure.
+- Drag to orbit, scroll to zoom, and use WASD or arrow keys to survey the world.
+- Space/P pauses; +/- changes simulation speed. The World view and observer log make changes easier to follow.
 
 ## Architecture
 
@@ -31,11 +31,9 @@ Open the local URL Vite prints (usually http://localhost:5173).
 
 ## Next steps to grow
 
-- Roads and ports that connect settlements, create trade routes, and visibly
-  animate goods between islands.
-- A settlement ledger: compact production/consumption trend lines so players can
-  predict shortages instead of discovering them only when stock hits zero.
-- Research-era unlocks that alter building silhouettes and introduce choices,
-  rather than simply raising output.
-- Diplomacy with the existing societies: trade agreements, gifts, and shared
-  festivals that affect mood and income.
+- A settlement ledger: compact production/consumption trend lines so observers
+  can predict shortages instead of discovering them only when stock hits zero.
+- Research-era civic projects that alter building silhouettes and introduce new
+  institutions, rather than simply raising output.
+- Richer diplomacy between societies: gifts, disputes, festivals, and treaties
+  that evolve independently of a single trade route.

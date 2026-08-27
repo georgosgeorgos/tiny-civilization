@@ -207,6 +207,24 @@ body,
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.observer {
+  top: 96px;
+  left: 16px;
+  width: min(330px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 236, 200, 0.12);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  font: 11px/1.4 "Segoe UI", sans-serif;
+}
+
+.observer-title { color: var(--ink); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.observer p { margin: 8px 0 0; color: #9eb0ac; }
+.activity-feed { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+.activity-feed li { border-left: 2px solid rgba(124, 224, 194, .65); padding-left: 7px; }
+
 .tools {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -258,6 +276,9 @@ body,
   .tools { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; overflow-y: visible; }
   .speeds { justify-content: space-between; }
   .speeds button { padding: 8px 9px; }
+  .observer { top: auto; bottom: 68px; max-height: 118px; overflow: hidden; }
+  .observer p { display: none; }
+  .activity-feed li:nth-child(n + 4) { display: none; }
 }
 
 .speeds {

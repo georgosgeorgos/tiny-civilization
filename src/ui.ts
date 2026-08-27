@@ -2,6 +2,7 @@ export type CivHudState = {
   year: number;
   season: string;
   era: string;
+  goal: string;
   clock: string;
   sky: string;
   day: number;
@@ -12,6 +13,7 @@ export type CivHudState = {
   people: number;
   others: number;
   towns: number;
+  tradeRoutes: number;
   housing: number;
   technology: number;
   health: number;
@@ -22,6 +24,7 @@ export type CivHudState = {
 export class Hud {
   private readonly hint = document.querySelector<HTMLElement>("#hint");
   private readonly turn = document.querySelector<HTMLElement>("#stat-turn");
+  private readonly goal = document.querySelector<HTMLElement>("#stat-goal");
   private readonly clock = document.querySelector<HTMLElement>("#stat-clock");
   private readonly gold = document.querySelector<HTMLElement>("#stat-gold");
   private readonly food = document.querySelector<HTMLElement>("#stat-food");
@@ -29,6 +32,7 @@ export class Hud {
   private readonly mood = document.querySelector<HTMLElement>("#stat-mood");
   private readonly people = document.querySelector<HTMLElement>("#stat-people");
   private readonly towns = document.querySelector<HTMLElement>("#stat-isles");
+  private readonly trade = document.querySelector<HTMLElement>("#stat-trade");
   private readonly technology = document.querySelector<HTMLElement>("#stat-tech");
   private readonly health = document.querySelector<HTMLElement>("#stat-health");
   private readonly land = document.querySelector<HTMLElement>("#stat-land");
@@ -39,6 +43,7 @@ export class Hud {
 
   refresh(state: CivHudState): void {
     if (this.turn) this.turn.textContent = `Year ${state.year} · ${state.season} · ${state.era}`;
+    if (this.goal) this.goal.textContent = state.goal;
     if (this.clock) this.clock.textContent = `${state.clock} · ${state.sky} · Day ${state.day}`;
     this.setResource(this.gold, "Gold", state.gold, Math.min(100, state.gold / 1.4));
     this.setResource(this.food, "Food", state.food, Math.min(100, state.food / Math.max(1, state.people * 3) * 100));
@@ -50,6 +55,7 @@ export class Hud {
       this.people.classList.toggle("warning", state.people > state.housing);
     }
     if (this.towns) this.towns.textContent = `Towns ${state.towns}`;
+    if (this.trade) this.trade.textContent = `Routes ${state.tradeRoutes}`;
     if (this.technology) this.technology.textContent = `Tech ${state.technology}`;
     this.setResource(this.health, "Health", state.health, state.health);
     this.setResource(this.land, "Land", state.land, state.land);

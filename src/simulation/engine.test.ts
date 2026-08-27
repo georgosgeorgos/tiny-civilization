@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { directivesFromText } from "../directive.ts";
 import { SimulationEngine } from "./engine.ts";
 import type { SimulationInputs } from "./types.ts";
 
@@ -10,6 +11,7 @@ const input: SimulationInputs = {
   annualProduction: { food: 18, wood: 8, gold: 6 },
   buildings,
   moodPressure: 0.2,
+  infrastructure: { roads: 0, ports: 0, tradeRoutes: 0 },
   disruption: "none",
 };
 
@@ -34,5 +36,19 @@ for (let day = 0; day < 24; day += 1) {
   extraction.advance({ ...input, buildings: { ...buildings, lumber: 8, farm: 8, fishery: 8 } });
 }
 assert.ok(extraction.snapshot.ecology.forest < 0.5, "intensive extraction should deplete forests");
+
+const isolated = new SimulationEngine(4, { food: 40, wood: 10, gold: 10 });
+const connected = new SimulationEngine(4, { food: 40, wood: 10, gold: 10 });
+for (let day = 0; day < 24; day += 1) {
+  isolated.advance({ ...input, annualProduction: { food: 0, wood: 0, gold: 0 } });
+  connected.advance({ ...input, annualProduction: { food: 0, wood: 0, gold: 0 }, infrastructure: { roads: 6, ports: 1, tradeRoutes: 1 } });
+}
+assert.ok(connected.snapshot.stores.food > isolated.snapshot.stores.food, "roads and ports should reduce food spoilage");
+
+assert.deepEqual(
+  directivesFromText("Secure food, then develop coastal trade and expand to new islands."),
+  ["food", "wealth", "frontier"],
+  "natural-language instructions should retain their stated priority order",
+);
 
 console.log("simulation tests passed");
