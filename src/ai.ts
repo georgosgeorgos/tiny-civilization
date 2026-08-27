@@ -1,5 +1,6 @@
 import type { LandKind } from "./world";
 import { BUILDINGS, type BuildingId } from "./buildings";
+import { priorityBuildings, type Directive } from "./directive";
 
 export type CivCounts = Record<BuildingId, number>;
 
@@ -31,6 +32,7 @@ export function eraName(people: number, buildings: number): string {
 export function chooseNextBuilding(
   snap: CivSnapshot,
   canBuild: (id: BuildingId) => boolean,
+  directive: Directive = "balanced",
 ): BuildingId | null {
   const { food, gold, wood, mood, people, housing, counts, buildingTotal } = snap;
   if (buildingTotal >= 56) return null;
@@ -46,6 +48,10 @@ export function chooseNextBuilding(
   };
 
   const hungry = people > 0 && food < people * 1.8;
+  if (!hungry && directive !== "balanced") {
+    const priority = pick(priorityBuildings(directive));
+    if (priority) return priority;
+  }
   if (hungry) {
     const id = pick(["fishery", "orchard", "farm", "lumber"]);
     if (id) return id;

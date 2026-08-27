@@ -21,11 +21,23 @@
           <span id="stat-mood" class="resource">Mood 52</span>
           <span id="stat-people">People 0</span>
           <span id="stat-isles">Towns 0</span>
+          <span id="stat-tech">Tech 1</span>
+          <span id="stat-health" class="resource">Health 72</span>
+          <span id="stat-land" class="resource">Land 90</span>
         </div>
       </header>
         <p id="hint" class="hud hud-hint">Auto is growing the camp. G toggles Auto. Scroll to see the isles.</p>
       <footer class="hud hud-bottom">
         <div id="tools" class="tools"></div>
+        <div class="zoom-controls" aria-label="Zoom controls"><span>View</span><button type="button" data-zoom="70">Local</button><button type="button" data-zoom="430">World</button><button type="button" data-zoom="1700">Space</button></div>
+        <section class="council" aria-label="Council directives">
+          <div class="council-title">Council directive</div>
+          <div class="directive-buttons">
+            <button type="button" class="active" data-directive="balanced">Balance</button><button type="button" data-directive="food">Food</button><button type="button" data-directive="growth">Growth</button><button type="button" data-directive="wealth">Wealth</button><button type="button" data-directive="culture">Culture</button><button type="button" data-directive="frontier">Frontier</button>
+          </div>
+          <form id="directive-form"><input id="directive-input" aria-label="Council instruction" placeholder="Tell the council: secure food" /><button type="submit">Direct</button></form>
+          <div class="world-actions"><button type="button" id="frontier-charter">Frontier charter</button><button type="button" id="trade-pact">Trade pact</button><button type="button" id="rival-claim">Rival claim</button></div>
+        </section>
         <div class="speeds">
           <button type="button" id="auto" class="active">Auto</button>
           <button type="button" data-speed="0">Pause</button>
@@ -41,9 +53,13 @@
         <p class="eyebrow">Simulation setup</p>
         <h1>Start a new world</h1>
         <p class="setup-copy">Choose the pressure and direction of your civilization. The world keeps evolving after a goal is reached.</p>
+        <label>Describe your world (optional)<textarea name="world-prompt" rows="2" placeholder="A harsh, manual frontier world with developing technology"></textarea></label>
+        <p class="prompt-help">Understands ideas like harsh/abundant, calm/wild, primitive/advanced, explore/prosper/survive, and manual/auto.</p>
         <label>Starting stores<select name="resources"><option value="lean">Lean — a hard beginning</option><option value="standard" selected>Standard</option><option value="abundant">Abundant — build quickly</option></select></label>
         <label>World temperament<select name="temperament"><option value="calm">Calm — longer weather cycles</option><option value="balanced" selected>Balanced</option><option value="wild">Wild — faster-changing forces</option></select></label>
         <label>Milestone goal<select name="goal"><option value="survive">Survive — 20 people through winter</option><option value="prosper" selected>Prosper — reach 250 gold</option><option value="explore">Explore — settle 3 isles</option></select></label>
+        <label>Technology start<select name="technology"><option value="primitive" selected>Primitive — discover fundamentals</option><option value="developing">Developing — established craft</option><option value="advanced">Advanced — fast start, harder expectations</option></select></label>
+        <label>Visual character<select name="style"><option value="natural" selected>Natural — warm, coastal world</option><option value="austere">Austere — subdued, northern world</option><option value="radiant">Radiant — vivid, high-contrast world</option></select></label>
         <label>Opening pace<select name="speed"><option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select></label>
         <label class="check"><input name="auto" type="checkbox" checked /> Let the settlement build automatically</label>
         <div class="setup-actions"><button type="button" id="setup-cancel">Cancel</button><button type="submit" class="primary">Begin simulation</button></div>

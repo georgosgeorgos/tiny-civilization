@@ -67,11 +67,15 @@ body,
 
 .hud-bottom {
   bottom: 12px;
-  left: 12px;
+  left: auto;
   right: 12px;
+  width: min(392px, calc(100vw - 24px));
   padding: 10px;
   border-radius: 16px;
-  align-items: flex-end;
+  align-items: stretch;
+  flex-direction: column;
+  max-height: min(430px, calc(100vh - 100px));
+  overflow-y: auto;
 }
 
 .brand {
@@ -96,6 +100,8 @@ body,
 
 .new-world:hover { background: rgba(124, 224, 194, 0.18); border-color: var(--accent); }
 
+.cinematic .hud-top, .cinematic .hud-bottom, .cinematic .hud-hint { display: none; }
+
 .setup {
   width: min(440px, calc(100vw - 32px));
   color: var(--ink);
@@ -113,6 +119,8 @@ body,
 .setup-copy { color: var(--muted); margin: 0 0 4px; font-size: 13px; line-height: 1.45; }
 .setup label { display: grid; gap: 5px; color: #e9dfd0; font-size: 12px; font-weight: 600; }
 .setup select { color: var(--ink); background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 8px; padding: 9px; font: inherit; }
+.setup textarea { resize: vertical; color: var(--ink); background: rgba(0, 0, 0, .18); border: 1px solid rgba(255, 255, 255, .13); border-radius: 8px; padding: 8px; font: 12px "Segoe UI", sans-serif; }
+.prompt-help { margin: -9px 0 1px; color: var(--muted); font: 10px/1.35 "Segoe UI", sans-serif; }
 .setup .check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 .setup-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .setup-actions button { border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 9px 12px; color: var(--ink); background: rgba(255,255,255,.06); cursor: pointer; font: 600 12px "Segoe UI", sans-serif; }
@@ -200,9 +208,9 @@ body,
 }
 
 .tools {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
   font-family: "Segoe UI", sans-serif;
 }
 
@@ -213,7 +221,7 @@ body,
   color: var(--ink);
   border-radius: 10px;
   padding: 6px 8px;
-  min-width: 78px;
+  min-width: 0;
   text-align: left;
   cursor: pointer;
 }
@@ -246,7 +254,8 @@ body,
   .stats { justify-content: flex-start; gap: 6px; }
   .stats span:nth-child(1), .stats span:nth-child(2) { width: 100%; }
   .hud-bottom { align-items: stretch; flex-direction: column; }
-  .tools { max-height: 116px; overflow-y: auto; }
+  .hud-bottom { left: 12px; width: auto; max-height: 46vh; }
+  .tools { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; overflow-y: visible; }
   .speeds { justify-content: space-between; }
   .speeds button { padding: 8px 9px; }
 }
@@ -256,6 +265,21 @@ body,
   gap: 6px;
   font-family: "Segoe UI", sans-serif;
 }
+
+.council { min-width: 226px; font-family: "Segoe UI", sans-serif; }
+.zoom-controls { display: flex; align-items: center; gap: 4px; font-family: "Segoe UI", sans-serif; }
+.zoom-controls span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.zoom-controls button { appearance: none; border: 1px solid rgba(255,255,255,.13); border-radius: 7px; color: var(--ink); background: rgba(255,255,255,.06); cursor: pointer; padding: 6px 7px; font: 600 10px "Segoe UI", sans-serif; }
+.zoom-controls button:hover { border-color: var(--accent); background: rgba(124,224,194,.15); }
+.council-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 5px 2px; }
+.directive-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+.directive-buttons button, #directive-form button { appearance: none; border: 1px solid rgba(255,255,255,.13); border-radius: 6px; color: var(--ink); background: rgba(255,255,255,.06); cursor: pointer; padding: 4px 6px; font: 600 10px "Segoe UI", sans-serif; }
+.directive-buttons button.active { color: #092119; border-color: var(--accent); background: var(--accent); }
+#directive-form { display: flex; gap: 4px; margin-top: 5px; }
+#directive-input { min-width: 0; flex: 1; color: var(--ink); background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 5px 7px; font: 11px "Segoe UI", sans-serif; }
+.world-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.world-actions button { appearance: none; border: 1px solid rgba(255,255,255,.13); border-radius: 6px; color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; padding: 4px 6px; font: 600 10px "Segoe UI", sans-serif; }
+.world-actions button:hover { border-color: var(--accent); color: var(--ink); }
 
 .speeds button {
   appearance: none;

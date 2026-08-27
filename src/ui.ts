@@ -13,6 +13,9 @@ export type CivHudState = {
   others: number;
   towns: number;
   housing: number;
+  technology: number;
+  health: number;
+  land: number;
 };
 
 /** Keeps presentation concerns out of the simulation loop. */
@@ -26,6 +29,9 @@ export class Hud {
   private readonly mood = document.querySelector<HTMLElement>("#stat-mood");
   private readonly people = document.querySelector<HTMLElement>("#stat-people");
   private readonly towns = document.querySelector<HTMLElement>("#stat-isles");
+  private readonly technology = document.querySelector<HTMLElement>("#stat-tech");
+  private readonly health = document.querySelector<HTMLElement>("#stat-health");
+  private readonly land = document.querySelector<HTMLElement>("#stat-land");
 
   setHint(text: string): void {
     if (this.hint) this.hint.textContent = text;
@@ -44,6 +50,9 @@ export class Hud {
       this.people.classList.toggle("warning", state.people > state.housing);
     }
     if (this.towns) this.towns.textContent = `Towns ${state.towns}`;
+    if (this.technology) this.technology.textContent = `Tech ${state.technology}`;
+    this.setResource(this.health, "Health", state.health, state.health);
+    this.setResource(this.land, "Land", state.land, state.land);
   }
 
   private setResource(element: HTMLElement | null, label: string, value: number, level: number): void {
