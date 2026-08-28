@@ -13,6 +13,7 @@ import { evolveInstitutions, institutionEffects } from "./institutions.ts";
 import { evolveInnovations, innovationEffects } from "./innovation.ts";
 import { settleShipment } from "./market.ts";
 import { resolveConflict } from "./conflict.ts";
+import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage } from "./diplomacy.ts";
 import type { SimulationInputs } from "./types.ts";
 
 const buildings = { hut: 3, farm: 2, mine: 0, fishery: 1, lumber: 1, shrine: 0, market: 1, orchard: 0, forge: 0 };
@@ -85,6 +86,20 @@ assert.ok((shipment.destination.food ?? 0) > 1 && (shipment.source.gold ?? 0) > 
 assert.equal(resolveConflict({ relation: -45, scarcity: 0.9, grievance: 0.9, defense: 0.05, diplomacy: 0.05 }).outcome, "raid", "unresolved scarcity and grievance should allow costly conflict");
 assert.equal(resolveConflict({ relation: 22, scarcity: 0.1, grievance: 0.1, defense: 0.2, diplomacy: 0.8 }).outcome, "reconciliation", "diplomacy should offer a nonviolent recovery path");
 
+const envoy = dispatchMessage(createDiplomaticChannel(), "trade-proposal", 10, { distance: 7, infrastructure: 0.75, languageAffinity: 0.9 });
+assert.equal(advanceDiplomaticChannel(envoy, 10, { infrastructure: 0.75, languageAffinity: 0.9, scarcity: 0.1 }).arrivals.length, 0, "diplomatic effects should wait for message travel");
+const envoyArrival = advanceDiplomaticChannel(envoy, 12, { infrastructure: 0.75, languageAffinity: 0.9, scarcity: 0.1 });
+assert.ok(channelSupportsContact(envoyArrival.channel), "an arrived envoy should establish a real information channel before any shipment");
+const pactOffer = dispatchMessage(envoyArrival.channel, "trade-proposal", 12, { distance: 7, infrastructure: 0.75, languageAffinity: 0.9 });
+const pactArrival = advanceDiplomaticChannel(pactOffer, 14, { infrastructure: 0.75, languageAffinity: 0.9, scarcity: 0.1 });
+assert.ok(channelSupportsTrade(pactArrival.channel), "well-supported, legible diplomacy should mature from parley into a trade pact");
+
+const noRoute = exchangeRegions([
+  { id: "a", q: 0, r: 0, population: 5, capacity: 8, food: 30, wood: 4, gold: 3, knowledge: 18, stability: 0.7, migrationPressure: 0.1, markets: 2, ports: 1, institutions: 2 },
+  { id: "b", q: 2, r: 0, population: 7, capacity: 12, food: 2, wood: 4, gold: 3, knowledge: 1, stability: 0.4, migrationPressure: 0.8, markets: 2, ports: 1, institutions: 2 },
+], 1, () => "none");
+assert.equal(noRoute.get("a")?.knowledge, 0, "isolated regions must not receive invisible network effects");
+
 const first = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
 const second = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
 for (let day = 0; day < 48; day += 1) {
@@ -135,6 +150,18 @@ const deepTime = new SimulationEngine(21, { food: 30, wood: 12, gold: 6 });
 deepTime.advanceYears({ ...input, annualProduction: { food: 24, wood: 7, gold: 5 } }, 1_000_000);
 assert.equal(deepTime.snapshot.elapsedDays, 12_000_000, "deep-time projection should advance calendar time without replaying every day");
 assert.ok(deepTime.snapshot.knowledge > 100_000, "deep-time projection should accumulate long-horizon knowledge");
+
+const crowdedExtraction = new SimulationEngine(71, { food: 30, wood: 20, gold: 20 });
+crowdedExtraction.advanceYears({
+  ...input,
+  population: 18,
+  housing: 18,
+  annualProduction: { food: 70, wood: 60, gold: 48 },
+  buildings: { hut: 8, farm: 6, mine: 4, fishery: 2, lumber: 5, shrine: 0, market: 1, orchard: 2, forge: 1 },
+  infrastructure: { roads: 1, ports: 0, tradeRoutes: 0 },
+}, 80);
+assert.ok(crowdedExtraction.snapshot.stores.wood <= 291 && crowdedExtraction.snapshot.stores.gold <= 216, "long-horizon stores should remain constrained by physical storage capacity");
+assert.ok(crowdedExtraction.snapshot.mortalityRisk > 0.7 && crowdedExtraction.snapshot.populationTrend < 0, "dense ecological degradation should produce a visible demographic crisis rather than perpetual growth");
 
 const evolved = new SimulationEngine(33, { food: 80, wood: 60, gold: 80 }, 180);
 evolved.advanceYears({

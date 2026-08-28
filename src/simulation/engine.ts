@@ -98,22 +98,24 @@ export class SimulationEngine {
       gold: inputs.annualProduction.gold * innovationRules.trade * innovationRules.extraction - maintenance * 0.35,
     };
     const reserve = Math.max(8, inputs.population * (2.5 + infrastructure * 4));
-    this.state.stores.food = annualFlow.food >= 0 ? Math.min(1_000_000_000, reserve + annualFlow.food * Math.min(span, 12)) : 0;
-    this.state.stores.wood = Math.max(0, Math.min(1_000_000_000, this.state.stores.wood + annualFlow.wood * span));
-    this.state.stores.gold = Math.max(0, Math.min(1_000_000_000, this.state.stores.gold + annualFlow.gold * span));
+    const storage = this.storageCapacity(inputs);
+    this.state.stores.food = annualFlow.food >= 0 ? Math.min(storage.food, reserve + annualFlow.food * Math.min(span, 12)) : 0;
+    this.state.stores.wood = Math.max(0, Math.min(storage.wood, this.state.stores.wood + annualFlow.wood * span));
+    this.state.stores.gold = Math.max(0, Math.min(storage.gold, this.state.stores.gold + annualFlow.gold * span));
     this.state.lastFlow = annualFlow;
 
     const foodSecurity = clamp01(this.state.stores.food / Math.max(2, inputs.population * 2.5) + institutionRules.foodSecurity);
     const crowding = inputs.population > inputs.housing ? 0.18 : 0;
     const disaster = (inputs.disruption === "none" ? 0 : inputs.disruption === "storm" ? 0.04 : 0.09) + climate.drought * 0.04 + climate.floodRisk * 0.025;
-    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 - crowding - disaster - this.state.ecology.disease * 0.28);
-    const stabilityTarget = clamp01(this.state.stability + inputs.moodPressure * 0.22 + infrastructure * 0.12 + institutionRules.stability - crowding - disaster * 0.75);
+    const diseaseBurden = this.diseaseBurden(inputs, institutionRules.healthProtection + innovationRules.healthProtection);
+    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 - crowding - disaster - diseaseBurden * 0.5);
+    const stabilityTarget = clamp01(this.state.stability + inputs.moodPressure * 0.22 + infrastructure * 0.12 + institutionRules.stability - crowding - disaster * 0.75 - diseaseBurden * 0.035);
     const convergence = 1 - Math.exp(-span * 0.45);
     this.state.health += (healthTarget - this.state.health) * convergence;
     this.state.stability += (stabilityTarget - this.state.stability) * convergence;
     this.state.cropHealth += (clamp01(0.78 + this.state.ecology.soil * 0.28 - disaster * 1.8) - this.state.cropHealth) * convergence;
     this.state.birthReadiness = clamp01((this.state.health - 0.5) * 1.8 + (this.state.stability - 0.5) * 0.35);
-    this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6);
+    this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6 + diseaseBurden * 0.8);
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
     this.state.knowledge = Math.min(1_000_000_000, this.state.knowledge + (inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge * span * (0.65 + this.state.stability * 0.5));
     this.state.seasonalStress = clamp01(disaster * 0.7 + (1 - foodSecurity) * 0.3);
@@ -155,20 +157,22 @@ export class SimulationEngine {
       wood: production.wood - maintenance,
       gold: production.gold - maintenance * 0.35,
     };
-    this.state.stores.food = Math.max(0, this.state.stores.food + this.state.lastFlow.food);
-    this.state.stores.wood = Math.max(0, this.state.stores.wood + this.state.lastFlow.wood);
-    this.state.stores.gold = Math.max(0, this.state.stores.gold + this.state.lastFlow.gold);
+    const storage = this.storageCapacity(inputs);
+    this.state.stores.food = Math.max(0, Math.min(storage.food, this.state.stores.food + this.state.lastFlow.food));
+    this.state.stores.wood = Math.max(0, Math.min(storage.wood, this.state.stores.wood + this.state.lastFlow.wood));
+    this.state.stores.gold = Math.max(0, Math.min(storage.gold, this.state.stores.gold + this.state.lastFlow.gold));
 
     const foodSecurity = clamp01(this.state.stores.food / Math.max(2, inputs.population * 2.5) + institutionRules.foodSecurity);
     const crowding = inputs.population > inputs.housing ? 0.18 : 0;
     const disaster = (inputs.disruption === "none" ? 0 : inputs.disruption === "storm" ? 0.04 : 0.09) + climate.drought * 0.04 + climate.floodRisk * 0.025;
-    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 + institutionRules.stability * 0.08 - crowding - disaster - this.state.ecology.disease * 0.28);
+    const diseaseBurden = this.diseaseBurden(inputs, institutionRules.healthProtection + innovationRules.healthProtection);
+    const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 + institutionRules.stability * 0.08 - crowding - disaster - diseaseBurden * 0.5);
     this.state.health += (healthTarget - this.state.health) * Math.min(1, 0.16 * stepDays);
     const noise = (this.random.next() - 0.5) * 0.012 * Math.sqrt(stepDays);
-    this.state.stability = clamp01(this.state.stability + (inputs.moodPressure * 0.015 + infrastructure * 0.008 - crowding * 0.08 - disaster * 0.12) * stepDays + noise);
+    this.state.stability = clamp01(this.state.stability + (inputs.moodPressure * 0.015 + infrastructure * 0.008 - crowding * 0.08 - disaster * 0.12 - diseaseBurden * 0.009) * stepDays + noise);
     const spareHousing = inputs.housing <= 0 ? 0 : clamp01((inputs.housing - inputs.population) / Math.max(2, inputs.housing));
     this.state.birthReadiness = clamp01((this.state.health - 0.5) * 1.8 + spareHousing * 0.65 + (this.state.stability - 0.5) * 0.35);
-    this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6);
+    this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6 + diseaseBurden * 0.8);
 
     this.state.seasonalStress = clamp01(this.state.seasonalStress + (disaster * 0.5 + (1 - foodSecurity) * 0.08 - 0.035) * stepDays);
     this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate);
@@ -291,5 +295,22 @@ export class SimulationEngine {
 
   private totalBuildings(buildings: Record<BuildingId, number>): number {
     return Object.values(buildings).reduce((sum, count) => sum + count, 0);
+  }
+
+  /** Stores are physical stockpiles, not an unbounded score. Markets, homes,
+   * and productive works expand reserves; overflow is lost to decay or theft. */
+  private storageCapacity(inputs: SimulationInputs): Stores {
+    const { buildings, population, infrastructure } = inputs;
+    const access = infrastructure.roads * 2 + infrastructure.ports * 7 + infrastructure.tradeRoutes * 10;
+    return {
+      food: Math.max(12, population * 5.5 + buildings.hut * 7 + (buildings.farm + buildings.orchard + buildings.fishery) * 5 + buildings.market * 28 + access),
+      wood: Math.max(12, population * 7 + buildings.hut * 8 + buildings.lumber * 15 + buildings.forge * 14 + buildings.market * 10 + access),
+      gold: Math.max(8, population * 4 + buildings.mine * 22 + buildings.forge * 24 + buildings.market * 30 + access),
+    };
+  }
+
+  private diseaseBurden(inputs: SimulationInputs, care: number): number {
+    const density = inputs.population / Math.max(1, inputs.housing);
+    return clamp01((this.state.ecology.disease - 0.08) * 1.35 + Math.max(0, density - 0.72) * 0.32 - care);
   }
 }

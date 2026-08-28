@@ -56,14 +56,14 @@ import { DIRECTIVE_COPY, directivesFromText, speedFromText, yearsFromText, type 
 import { SimulationClient } from "./simulation/client.ts";
 import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInputs } from "./simulation/types.ts";
 import type { EvolutionEra } from "./simulation/evolution.ts";
-import { exchangeRegions, type NetworkRegion } from "./simulation/network.ts";
+import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, type HouseholdMetrics } from "./simulation/households.ts";
 import { settleShipment } from "./simulation/market.ts";
 import { resolveConflict } from "./simulation/conflict.ts";
-import { advanceDiplomaticChannel, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
+import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
 import { TerrainChunks } from "./terrain-chunks";
 import { WorldState } from "./world-state";
 import type { TerritorialClaim } from "./world-state";
@@ -140,6 +140,7 @@ type CommunicationLink = {
   destination: THREE.Vector3;
   line: THREE.Line;
   pulse: THREE.Mesh;
+  mode: "parley" | "trade";
 };
 
 type District = "homes" | "fields" | "works" | "civic" | "harbor";
@@ -2095,7 +2096,6 @@ export class Game {
     const playerLanguage = this.simulation.snapshot.culture.language;
     const infrastructure = this.playerInfrastructure();
     for (const society of this.societies.values()) {
-      const [q, r] = society.islandId.split(",").map(Number);
       const affinity = playerLanguage.family === society.culture.language.family ? 0.95 : Math.max(0.12, 1 - Math.abs(playerLanguage.boundary - society.culture.language.boundary) * 0.7);
       const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
       const result = advanceDiplomaticChannel(society.diplomacy, year, {
@@ -2117,11 +2117,23 @@ export class Game {
           this.setHint(`${society.name} receives the rival claim and closes its border. Trust falls before conflict begins.`);
         }
       }
-      // Geographic distance is intentionally unused in the resolution: it was
-      // paid at dispatch time. Once a message arrives, context—not teleporting
-      // distance—determines its credibility.
-      void q; void r;
     }
+  }
+
+  /** Every modeled regional exchange must have an established social channel.
+   * Two neighbors who both maintain a pact with the player can also exchange
+   * through that shared corridor; a parley moves ideas, a pact moves goods. */
+  private networkConnection(from: NetworkRegion, to: NetworkRegion): NetworkConnection {
+    const fromSociety = from.id === "player" ? null : this.societies.get(from.id);
+    const toSociety = to.id === "player" ? null : this.societies.get(to.id);
+    if (!fromSociety && !toSociety) return "none";
+    if (!fromSociety || !toSociety) {
+      const channel = fromSociety?.diplomacy ?? toSociety?.diplomacy;
+      if (!channel) return "none";
+      return channelSupportsTrade(channel) ? "trade" : channelSupportsContact(channel) ? "parley" : "none";
+    }
+    if (!channelSupportsContact(fromSociety.diplomacy) || !channelSupportsContact(toSociety.diplomacy)) return "none";
+    return channelSupportsTrade(fromSociety.diplomacy) && channelSupportsTrade(toSociety.diplomacy) ? "trade" : "parley";
   }
 
   private resolveRegionalConflicts(): void {
@@ -2551,6 +2563,7 @@ export class Game {
     this.diplomacyTimer += simDt;
     if (this.diplomacyTimer > SECONDS_PER_DAY * 3) {
       this.diplomacyTimer = 0;
+      this.advanceRegionalDiplomacy();
       this.tryAutonomousDiplomacy();
       this.resolveRegionalConflicts();
     }
@@ -2658,7 +2671,7 @@ export class Game {
         language: society.culture.language,
       });
     }
-    const effects = exchangeRegions(regions, years);
+    const effects = exchangeRegions(regions, years, (from, to) => this.networkConnection(from, to));
     const playerEffect = effects.get("player");
     if (playerEffect) {
       this.food = Math.max(0, this.food + playerEffect.food);
@@ -2711,24 +2724,35 @@ export class Game {
     const wanted = new Set<string>();
     for (const region of regions) {
       if (region.id === "player") continue;
-      const ready = playerReady && region.markets + region.institutions + region.ports >= 1;
-      if (!ready) continue;
+      const society = this.societies.get(region.id);
+      const mode = society && channelSupportsTrade(society.diplomacy) ? "trade" : society && channelSupportsContact(society.diplomacy) ? "parley" : null;
+      const ready = playerReady && Boolean(mode) && region.markets + region.institutions + region.ports >= 1;
+      if (!ready || !mode) continue;
       const key = `player:${region.id}`;
       wanted.add(key);
-      if (this.communicationLinks.has(key)) continue;
+      const existing = this.communicationLinks.get(key);
+      if (existing?.mode === mode) continue;
+      if (existing) {
+        this.communicationGroup.remove(existing.line, existing.pulse);
+        existing.line.geometry.dispose();
+        (existing.line.material as THREE.Material).dispose();
+        existing.pulse.geometry.dispose();
+        (existing.pulse.material as THREE.Material).dispose();
+        this.communicationLinks.delete(key);
+      }
       const from = this.regionPoint("player");
       const to = this.regionPoint(region.id);
       if (!from || !to) continue;
       const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
-      const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: 0x8de9ff, dashSize: 1.15, gapSize: 0.72, transparent: true, opacity: 0.72 }));
+      const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: mode === "trade" ? 0x8de9ff : 0xd6a6ff, dashSize: mode === "trade" ? 1.15 : 0.56, gapSize: mode === "trade" ? 0.72 : 1.05, transparent: true, opacity: mode === "trade" ? 0.72 : 0.46 }));
       line.computeLineDistances();
       const pulse = new THREE.Mesh(
         new THREE.SphereGeometry(0.23, 10, 8),
-        new THREE.MeshStandardMaterial({ color: 0xe9fbff, emissive: 0x2ecff0, emissiveIntensity: 2.2, roughness: 0.2 }),
+        new THREE.MeshStandardMaterial({ color: mode === "trade" ? 0xe9fbff : 0xf0ddff, emissive: mode === "trade" ? 0x2ecff0 : 0x9b58d2, emissiveIntensity: mode === "trade" ? 2.2 : 1.25, roughness: 0.2 }),
       );
       this.communicationGroup.add(line, pulse);
-      this.communicationLinks.set(key, { source: from, destination: to, line, pulse });
-      this.setHint(`A signal corridor opens with ${this.societies.get(region.id)?.name ?? "a neighboring region"}. Knowledge and supplies can now travel visibly.`);
+      this.communicationLinks.set(key, { source: from, destination: to, line, pulse, mode });
+      this.setHint(`${mode === "trade" ? "A trade corridor" : "A cautious signal corridor"} opens with ${this.societies.get(region.id)?.name ?? "a neighboring region"}. ${mode === "trade" ? "Goods, people, and knowledge" : "Ideas and customs"} can now travel visibly.`);
     }
     for (const [key, link] of this.communicationLinks) {
       if (wanted.has(key)) continue;
@@ -2834,9 +2858,9 @@ export class Game {
   }
 
   private tryHunger(): void {
-    if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.58) {
+    if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.48) {
       const gone = this.exileHungry(false);
-      if (gone) this.setHint("Poor health and insecurity drove a villager to leave.");
+      if (gone) this.setHint("Disease, hunger, or insecurity drove a villager to leave.");
       return;
     }
     for (const society of this.societies.values()) {

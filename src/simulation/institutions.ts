@@ -2,7 +2,7 @@ import type { CulturalState, SimulationInputs, Stores } from "./types.ts";
 
 export type InstitutionKind = "council" | "commons" | "guild" | "sanctuary" | "archive" | "watch" | "elders" | "faction" | "maintenance" | "sections";
 export type InstitutionState = { forms: InstitutionKind[]; legitimacy: number; commonReserve: number; inequality: number };
-export type InstitutionEffects = { foodSecurity: number; spoilageProtection: number; knowledgeMultiplier: number; stability: number; labor: number; inequalityPressure: number };
+export type InstitutionEffects = { foodSecurity: number; spoilageProtection: number; healthProtection: number; knowledgeMultiplier: number; stability: number; labor: number; inequalityPressure: number };
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -11,6 +11,7 @@ export function institutionEffects(state: InstitutionState): InstitutionEffects 
   return {
     foodSecurity: (forms.has("commons") ? 0.1 : 0) + (forms.has("sanctuary") ? 0.04 : 0) + (forms.has("elders") ? 0.045 : 0),
     spoilageProtection: (forms.has("commons") ? 0.24 : 0) + (forms.has("guild") ? 0.08 : 0) + (forms.has("maintenance") ? 0.06 : 0),
+    healthProtection: (forms.has("sanctuary") ? 0.14 : 0) + (forms.has("elders") ? 0.05 : 0) + (forms.has("maintenance") ? 0.1 : 0) + (forms.has("sections") ? 0.06 : 0),
     knowledgeMultiplier: 1 + (forms.has("archive") ? 0.28 : 0) + (forms.has("guild") ? 0.1 : 0) + (forms.has("elders") ? 0.06 : 0) + (forms.has("maintenance") ? 0.14 : 0),
     stability: (forms.has("council") ? 0.1 : 0) + (forms.has("sanctuary") ? 0.08 : 0) + (forms.has("watch") ? 0.04 : 0) + (forms.has("elders") ? 0.06 : 0) + (forms.has("maintenance") ? 0.1 : 0) - (forms.has("faction") ? 0.035 : 0),
     labor: 1 + (forms.has("guild") ? 0.08 : 0) + (forms.has("commons") ? 0.04 : 0) + (forms.has("faction") ? 0.05 : 0),

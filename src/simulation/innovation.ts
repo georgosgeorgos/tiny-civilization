@@ -2,7 +2,7 @@ import type { CulturalState, Ecology, SimulationInputs } from "./types.ts";
 
 export type Technique = "seed-selection" | "waterworks" | "sailcraft" | "ledger" | "metallurgy" | "public-archive" | "soil-restoration";
 export type InnovationState = { techniques: Technique[]; provenance: Partial<Record<Technique, string>> };
-export type InnovationEffects = { food: number; knowledge: number; trade: number; extraction: number; ecology: number };
+export type InnovationEffects = { food: number; knowledge: number; trade: number; extraction: number; ecology: number; healthProtection: number };
 
 const has = (state: InnovationState, technique: Technique) => state.techniques.includes(technique);
 
@@ -13,6 +13,7 @@ export function innovationEffects(state: InnovationState): InnovationEffects {
     trade: 1 + (has(state, "sailcraft") ? 0.2 : 0) + (has(state, "ledger") ? 0.08 : 0),
     extraction: 1 + (has(state, "metallurgy") ? 0.18 : 0),
     ecology: 1 + (has(state, "soil-restoration") ? 0.18 : 0),
+    healthProtection: (has(state, "waterworks") ? 0.14 : 0) + (has(state, "public-archive") ? 0.04 : 0),
   };
 }
 

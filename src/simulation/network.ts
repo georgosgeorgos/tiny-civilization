@@ -21,6 +21,7 @@ export type NetworkRegion = {
 };
 
 export type NetworkEffect = { food: number; wood: number; gold: number; knowledge: number; stability: number; migrants: number; culture: CultureTraits };
+export type NetworkConnection = "none" | "parley" | "trade";
 
 const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, stability: 0, migrants: 0, culture: { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 } });
 
@@ -29,7 +30,11 @@ const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, s
  * and local readiness. It has no central controller: every pair can become a
  * weak route once both places develop institutions or coastal access.
  */
-export function exchangeRegions(regions: readonly NetworkRegion[], years: number): ReadonlyMap<string, NetworkEffect> {
+export function exchangeRegions(
+  regions: readonly NetworkRegion[],
+  years: number,
+  connection: (from: NetworkRegion, to: NetworkRegion) => NetworkConnection = () => "trade",
+): ReadonlyMap<string, NetworkEffect> {
   const effects = new Map<string, NetworkEffect>(regions.map((region) => [region.id, blank()]));
   const span = Math.max(0, Math.min(1, years * 4));
   for (let a = 0; a < regions.length; a += 1) {
@@ -38,6 +43,8 @@ export function exchangeRegions(regions: readonly NetworkRegion[], years: number
     for (let b = a + 1; b < regions.length; b += 1) {
       const to = regions[b];
       if (!to) continue;
+      const mode = connection(from, to);
+      if (mode === "none") continue;
       const distance = hexDistance(from.q - to.q, from.r - to.r);
       if (distance > 110) continue;
       const readiness = Math.min(
@@ -54,17 +61,19 @@ export function exchangeRegions(regions: readonly NetworkRegion[], years: number
           : fromLanguage.family === toLanguage.family
             ? 0.78 - Math.abs(fromLanguage.boundary - toLanguage.boundary) * 0.16
             : 0.42 - (fromLanguage.boundary + toLanguage.boundary) * 0.18;
-      const strength = readiness * (1 - distance / 132) * span * Math.max(0.18, linguisticAffinity);
+      const strength = readiness * (1 - distance / 132) * span * Math.max(0.18, linguisticAffinity) * (mode === "trade" ? 1 : 0.58);
       const fromEffect = effects.get(from.id) as NetworkEffect;
       const toEffect = effects.get(to.id) as NetworkEffect;
-      const fromSurplus = Math.max(0, from.food - from.population * 3.4);
-      const toSurplus = Math.max(0, to.food - to.population * 3.4);
-      const foodTransfer = Math.min(Math.max(0, fromSurplus - toSurplus) * strength * 0.28, Math.max(0, to.population * 2.3 - to.food));
-      const reverseFood = Math.min(Math.max(0, toSurplus - fromSurplus) * strength * 0.28, Math.max(0, from.population * 2.3 - from.food));
-      fromEffect.food -= foodTransfer;
-      toEffect.food += foodTransfer;
-      toEffect.food -= reverseFood;
-      fromEffect.food += reverseFood;
+      if (mode === "trade") {
+        const fromSurplus = Math.max(0, from.food - from.population * 3.4);
+        const toSurplus = Math.max(0, to.food - to.population * 3.4);
+        const foodTransfer = Math.min(Math.max(0, fromSurplus - toSurplus) * strength * 0.28, Math.max(0, to.population * 2.3 - to.food));
+        const reverseFood = Math.min(Math.max(0, toSurplus - fromSurplus) * strength * 0.28, Math.max(0, from.population * 2.3 - from.food));
+        fromEffect.food -= foodTransfer;
+        toEffect.food += foodTransfer;
+        toEffect.food -= reverseFood;
+        fromEffect.food += reverseFood;
+      }
 
       const knowledgeFlow = (from.knowledge - to.knowledge) * strength * 0.018;
       fromEffect.knowledge -= knowledgeFlow;
@@ -81,17 +90,19 @@ export function exchangeRegions(regions: readonly NetworkRegion[], years: number
         toEffect.culture[trait] += diffusion;
       }
 
-      const origin = from.migrationPressure > to.migrationPressure ? from : to;
-      const destination = origin === from ? to : from;
-      const originEffect = effects.get(origin.id) as NetworkEffect;
-      const destinationEffect = effects.get(destination.id) as NetworkEffect;
-      const room = Math.max(0, destination.capacity - destination.population);
-      const migrationPotential = origin.population * origin.migrationPressure * strength * 0.35;
-      const migrants = Math.min(room, migrationPotential >= 0.35 ? Math.max(1, Math.floor(migrationPotential)) : 0);
-      originEffect.migrants -= migrants;
-      destinationEffect.migrants += migrants;
-      originEffect.gold += migrants * 0.08;
-      destinationEffect.gold -= migrants * 0.08;
+      if (mode === "trade") {
+        const origin = from.migrationPressure > to.migrationPressure ? from : to;
+        const destination = origin === from ? to : from;
+        const originEffect = effects.get(origin.id) as NetworkEffect;
+        const destinationEffect = effects.get(destination.id) as NetworkEffect;
+        const room = Math.max(0, destination.capacity - destination.population);
+        const migrationPotential = origin.population * origin.migrationPressure * strength * 0.35;
+        const migrants = Math.min(room, migrationPotential >= 0.35 ? Math.max(1, Math.floor(migrationPotential)) : 0);
+        originEffect.migrants -= migrants;
+        destinationEffect.migrants += migrants;
+        originEffect.gold += migrants * 0.08;
+        destinationEffect.gold -= migrants * 0.08;
+      }
     }
   }
   return effects;

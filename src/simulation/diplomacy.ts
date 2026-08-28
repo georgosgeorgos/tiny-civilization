@@ -48,3 +48,8 @@ export function advanceDiplomaticChannel(channel: DiplomaticChannel, year: numbe
 export function channelSupportsTrade(channel: DiplomaticChannel): boolean {
   return channel.treaty === "trade-pact" && channel.trust >= 0.38 && channel.reliability >= 0.34;
 }
+
+/** A parley carries ideas and customs, while a pact also carries people and goods. */
+export function channelSupportsContact(channel: DiplomaticChannel): boolean {
+  return (channel.treaty === "parley" || channel.treaty === "trade-pact") && channel.reliability >= 0.24;
+}
