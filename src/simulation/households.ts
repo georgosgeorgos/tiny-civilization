@@ -1,3 +1,9 @@
+export type BehavioralStrategy = {
+  mobility: number;
+  reserve: number;
+  tradeOpenness: number;
+};
+
 export type HouseholdResident = {
   id: string;
   regionId: string;
@@ -5,6 +11,7 @@ export type HouseholdResident = {
   age: number;
   role: string;
   seed: number;
+  strategy: BehavioralStrategy;
 };
 
 export type HouseholdContext = {
@@ -12,6 +19,7 @@ export type HouseholdContext = {
   food: number;
   housing: number;
   mood: number;
+  environmentalStress?: number;
 };
 
 export type HouseholdMetrics = {
@@ -23,6 +31,7 @@ export type HouseholdMetrics = {
   laborReadiness: number;
   birthReadiness: number;
   migrationPressure: number;
+  strategy: BehavioralStrategy;
   vulnerableResidentId: string | null;
 };
 
@@ -33,9 +42,45 @@ type Household = {
   wealth: number;
   cohesion: number;
   rememberedHardship: number;
+  strategy: BehavioralStrategy;
 };
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
+
+const noise = (seed: number, salt: number) => ((Math.sin((seed + salt * 0.137) * 17831.31) * 43758.5453) % 1 + 1) % 1;
+
+export function initialBehavioralStrategy(seed: number): BehavioralStrategy {
+  return {
+    mobility: 0.25 + noise(seed, 1) * 0.5,
+    reserve: 0.25 + noise(seed, 2) * 0.5,
+    tradeOpenness: 0.25 + noise(seed, 3) * 0.5,
+  };
+}
+
+/** Children retain a recognisable family disposition, with small bounded
+ * variation. Selection happens later through household outcomes. */
+export function inheritBehavioralStrategy(parent: BehavioralStrategy, seed: number): BehavioralStrategy {
+  return {
+    mobility: clamp(parent.mobility + (noise(seed, 11) - 0.5) * 0.14),
+    reserve: clamp(parent.reserve + (noise(seed, 12) - 0.5) * 0.14),
+    tradeOpenness: clamp(parent.tradeOpenness + (noise(seed, 13) - 0.5) * 0.14),
+  };
+}
+
+const blendStrategy = (current: BehavioralStrategy, exemplar: BehavioralStrategy, amount: number): BehavioralStrategy => ({
+  mobility: current.mobility + (exemplar.mobility - current.mobility) * amount,
+  reserve: current.reserve + (exemplar.reserve - current.reserve) * amount,
+  tradeOpenness: current.tradeOpenness + (exemplar.tradeOpenness - current.tradeOpenness) * amount,
+});
+
+const meanStrategy = (strategies: readonly BehavioralStrategy[]): BehavioralStrategy => {
+  const count = Math.max(1, strategies.length);
+  return strategies.reduce((mean, strategy) => ({
+    mobility: mean.mobility + strategy.mobility / count,
+    reserve: mean.reserve + strategy.reserve / count,
+    tradeOpenness: mean.tradeOpenness + strategy.tradeOpenness / count,
+  }), { mobility: 0, reserve: 0, tradeOpenness: 0 });
+};
 
 /**
  * A sampled household layer over visible residents. It is intentionally small:
@@ -64,14 +109,31 @@ export class HouseholdSystem {
       const housingSecurity = clamp(context.housing / Math.max(1, members.length));
       const foodSecurity = clamp(foodPerPerson / 2.6);
       const socialSecurity = clamp(context.mood / 100);
+      const environmentalStress = clamp(context.environmentalStress ?? 1 - foodSecurity);
       for (const household of group) {
         const householdMembers = household.members.map((id) => this.residents.get(id)).filter((resident): resident is HouseholdResident => Boolean(resident));
         const householdWorkers = householdMembers.filter((resident) => resident.age >= 16 && resident.age < 64).length;
         const burden = householdMembers.length - householdWorkers;
-        const security = foodSecurity * 0.5 + housingSecurity * 0.2 + socialSecurity * 0.3;
-        household.wealth = Math.max(0, household.wealth + years * (householdWorkers * (0.5 + security) - burden * 0.32 - (1 - foodSecurity) * householdMembers.length * 0.45));
-        household.rememberedHardship = clamp(household.rememberedHardship + years * ((1 - security) * 0.38 - household.rememberedHardship * 0.08));
-        household.cohesion = clamp(household.cohesion + years * (security * 0.12 - household.rememberedHardship * 0.1));
+        const strategy = household.strategy;
+        const adaptiveSecurity = clamp(
+          foodSecurity * 0.5 + housingSecurity * 0.2 + socialSecurity * 0.3 +
+          strategy.reserve * (1 - foodSecurity) * 0.14 +
+          strategy.mobility * environmentalStress * 0.12 + strategy.tradeOpenness * socialSecurity * 0.05,
+        );
+        household.wealth = Math.max(0, household.wealth + years * (householdWorkers * (0.5 + adaptiveSecurity + strategy.tradeOpenness * 0.12) - burden * 0.32 - (1 - foodSecurity) * householdMembers.length * (0.48 - strategy.reserve * 0.1)));
+        household.rememberedHardship = clamp(household.rememberedHardship + years * ((1 - adaptiveSecurity) * (0.4 - strategy.reserve * 0.07 - strategy.mobility * environmentalStress * 0.04) - household.rememberedHardship * 0.08));
+        household.cohesion = clamp(household.cohesion + years * (adaptiveSecurity * 0.12 - household.rememberedHardship * 0.1 - strategy.mobility * 0.025 + strategy.tradeOpenness * 0.015));
+      }
+      // Households copy a modest share of the practices that are visibly
+      // succeeding locally. There is no global exemplar, so regions can
+      // diverge under different ecological and material conditions.
+      const exemplar = [...group].sort((left, right) => (right.wealth + right.cohesion * 6) - (left.wealth + left.cohesion * 6))[0];
+      if (exemplar) {
+        for (const household of group) {
+          if (household === exemplar) continue;
+          const disadvantage = clamp((exemplar.wealth - household.wealth) / Math.max(4, exemplar.wealth + 4));
+          household.strategy = blendStrategy(household.strategy, exemplar.strategy, years * (0.018 + disadvantage * 0.08));
+        }
       }
       const wealths = group.map((household) => household.wealth).sort((a, b) => a - b);
       const meanWealth = wealths.reduce((sum, value) => sum + value, 0) / Math.max(1, wealths.length);
@@ -89,7 +151,8 @@ export class HouseholdSystem {
         inequality: clamp(spread),
         laborReadiness: clamp(0.55 + cohesion * 0.32 + foodSecurity * 0.2 - hardship * 0.2),
         birthReadiness: clamp(foodSecurity * 0.45 + housingSecurity * 0.3 + cohesion * 0.25 - hardship * 0.22),
-        migrationPressure: clamp(hardship * 0.48 + (1 - housingSecurity) * 0.2 + (1 - foodSecurity) * 0.25 + spread * 0.15),
+        migrationPressure: clamp(hardship * 0.48 + (1 - housingSecurity) * 0.2 + (1 - foodSecurity) * 0.25 + spread * 0.15) * (0.72 + meanStrategy(group.map((household) => household.strategy)).mobility * 0.56),
+        strategy: meanStrategy(group.map((household) => household.strategy)),
         vulnerableResidentId: vulnerable,
       });
     }
@@ -111,11 +174,22 @@ export class HouseholdSystem {
       if (!sample) continue;
       const prior = this.households.get(id);
       this.households.set(id, prior ?? {
-        id, regionId: sample.regionId, members: [], wealth: 3 + sample.seed * 12, cohesion: 0.46 + sample.seed * 0.22, rememberedHardship: 0,
+        id, regionId: sample.regionId, members: [], wealth: 3 + sample.seed * 12, cohesion: 0.46 + sample.seed * 0.22, rememberedHardship: 0, strategy: sample.strategy,
       });
       const household = this.households.get(id)!;
       household.members = members;
+      household.regionId = sample.regionId;
+      // A newcomer retains their family tendency, while a durable household
+      // does not instantly discard its accumulated local practice.
+      household.strategy = blendStrategy(household.strategy, meanStrategy(members.map((member) => this.residents.get(member)?.strategy).filter((strategy): strategy is BehavioralStrategy => Boolean(strategy))), 0.06);
     }
     for (const id of this.households.keys()) if (!wanted.has(id)) this.households.delete(id);
+  }
+
+  strategyFor(residentId: string): BehavioralStrategy | null {
+    const resident = this.residents.get(residentId);
+    if (!resident) return null;
+    const household = this.households.get(`${resident.regionId}:${resident.homeKey}`);
+    return household ? { ...household.strategy } : null;
   }
 }

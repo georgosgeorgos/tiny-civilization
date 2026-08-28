@@ -60,7 +60,7 @@ import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./s
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
-import { HouseholdSystem, type HouseholdMetrics } from "./simulation/households.ts";
+import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type BehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
 import { settleShipment } from "./simulation/market.ts";
 import { resolveConflict } from "./simulation/conflict.ts";
 import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
@@ -94,6 +94,7 @@ type Person = {
   islandId: string;
   seed: number;
   age: number;
+  strategy: BehavioralStrategy;
 };
 
 type Society = {
@@ -1280,8 +1281,12 @@ export class Game {
     this.peopleGroup.add(mesh);
   }
 
-  private spawnOne(tile: Tile, role: PersonRole, index = 0, tribe = false): void {
+  private spawnOne(tile: Tile, role: PersonRole, index = 0, tribe = false, inherit = false): void {
     const seed = (hash2(tile.q + index + 3, tile.r + index) + index * 0.17 + this.people.length * 0.09) % 1;
+    const parent = inherit
+      ? this.people.find((person) => person.tribe === tribe && person.islandId === tile.islandId && person.age >= 18 && person.age < 60 && person.homeQ === tile.q && person.homeR === tile.r)
+        ?? this.people.find((person) => person.tribe === tribe && person.islandId === tile.islandId && person.age >= 18 && person.age < 60)
+      : undefined;
     const mesh = makeHuman(role, seed);
     const angle = seed * Math.PI * 2 + index * 2.15;
     const offset = new THREE.Vector3(Math.cos(angle) * 0.52, 0, Math.sin(angle) * 0.52);
@@ -1307,6 +1312,7 @@ export class Game {
       islandId: tile.islandId,
       seed,
       age: 16 + Math.floor(seed * 40),
+      strategy: parent ? inheritBehavioralStrategy(parent.strategy, seed) : initialBehavioralStrategy(seed),
     };
     mesh.position.copy(this.personWorldPos(person, tile, tile, 1));
     mesh.scale.setScalar(0.01);
@@ -2467,10 +2473,18 @@ export class Game {
         age: person.age,
         role: person.role,
         seed: person.seed,
+        strategy: person.strategy,
       })),
-      [{ id: "player", food: this.food, housing, mood: this.mood }],
+      [
+        { id: "player", food: this.food, housing, mood: this.mood, environmentalStress: THREE.MathUtils.clamp(1 - (this.simulation.snapshot.ecology.water + this.simulation.snapshot.climate.rainfall) * 0.5, 0, 1) },
+        ...[...this.societies.values()].map((society) => ({ id: society.islandId, food: society.food, housing: this.housingOf("tribe", society.islandId), mood: society.mood, environmentalStress: THREE.MathUtils.clamp(1 - society.food / Math.max(4, this.people.filter((person) => person.tribe && person.islandId === society.islandId).length * 2.4), 0, 1) })),
+      ],
       simDt / YEAR_SECONDS,
     );
+    for (const person of this.people) {
+      const learned = this.households.strategyFor(person.id);
+      if (learned) person.strategy = learned;
+    }
     this.householdMetrics = householdSignals.get("player") ?? null;
     const household = this.householdMetrics;
     if (household) happiness += (household.cohesion - household.inequality) * 8;
@@ -2563,7 +2577,7 @@ export class Game {
           housing: tribeHousing,
           annualProduction: annual,
           buildings: counts,
-          moodPressure: (tribeHappiness - 50) / 50,
+          moodPressure: (tribeHappiness - 50) / 50 - (householdSignals.get(society.islandId)?.migrationPressure ?? 0) * 0.1,
           infrastructure: { roads: 0, ports: 0, tradeRoutes: 0 },
           disruption,
           fidelity: "remote",
@@ -2708,6 +2722,12 @@ export class Game {
     return { roads, ports, tradeRoutes: this.tradeRoutes.size };
   }
 
+  private regionalTradeOpenness(id: string): number {
+    const residents = this.people.filter((person) => (id === "player" ? !person.tribe : person.tribe && person.islandId === id));
+    if (residents.length === 0) return 0.5;
+    return residents.reduce((total, person) => total + person.strategy.tradeOpenness, 0) / residents.length;
+  }
+
   private exchangeBetweenRegions(years: number): void {
     const player = this.civSnapshot();
     const playerSim = this.simulation.snapshot;
@@ -2718,8 +2738,9 @@ export class Game {
       stability: playerSim.stability, migrationPressure: playerSim.migrationPressure,
       markets: player.counts.market, ports: playerInfrastructure.ports,
       institutions: player.counts.market + player.counts.shrine + player.counts.forge,
-        culture: playerSim.culture.traits,
-        language: playerSim.culture.language,
+      openness: this.regionalTradeOpenness("player"),
+      culture: playerSim.culture.traits,
+      language: playerSim.culture.language,
     }];
     for (const society of this.societies.values()) {
       const [q, r] = society.islandId.split(",").map(Number);
@@ -2732,6 +2753,7 @@ export class Game {
         markets: tiles.filter((tile) => tile.building === "market").length,
         ports: tiles.filter((tile) => tile.coast && (tile.building === "market" || tile.building === "fishery")).length,
         institutions: tiles.filter((tile) => tile.building === "market" || tile.building === "shrine" || tile.building === "forge").length,
+        openness: this.regionalTradeOpenness(society.islandId),
         culture: society.culture.traits,
         language: society.culture.language,
       });
@@ -2890,7 +2912,9 @@ export class Game {
 
   private moveResident(originId: string, destinationId: string): boolean {
     const originTribe = originId !== "player";
-    const resident = this.people.find((person) => person.tribe === originTribe && (originTribe ? person.islandId === originId : true));
+    const resident = this.people
+      .filter((person) => person.tribe === originTribe && (originTribe ? person.islandId === originId : true))
+      .sort((left, right) => right.strategy.mobility - left.strategy.mobility || left.age - right.age)[0];
     const destinationTribe = destinationId !== "player";
     const home = [...this.tiles.values()].find(
       (tile) =>
@@ -2936,7 +2960,7 @@ export class Game {
         (tile) => tile.building === "hut" && tile.owner === "player" && tile.buildLeft <= 0,
       );
       if (hut) {
-        this.spawnOne(hut, "villager");
+        this.spawnOne(hut, "villager", 0, false, true);
         this.assignHomes();
         this.setHint("A child of the village came of age.");
         return;
@@ -2954,7 +2978,7 @@ export class Game {
           tile.buildLeft <= 0,
       );
       if (!hut) continue;
-      this.spawnOne(hut, "villager", 0, true);
+      this.spawnOne(hut, "villager", 0, true, true);
       this.assignHomes();
       this.setHint(`${society.name} welcomed a new villager.`);
       return;

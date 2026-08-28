@@ -16,6 +16,8 @@ export type NetworkRegion = {
   markets: number;
   ports: number;
   institutions: number;
+  /** Mean household willingness to seek outside exchange. */
+  openness?: number;
   culture?: CultureTraits;
   language?: LanguageState;
 };
@@ -66,7 +68,8 @@ export function exchangeRegions(
           : fromLanguage.family === toLanguage.family
             ? 0.78 - Math.abs(fromLanguage.boundary - toLanguage.boundary) * 0.16
             : 0.42 - (fromLanguage.boundary + toLanguage.boundary) * 0.18;
-      const strength = readiness * (1 - distance / 132) * span * Math.max(0.18, linguisticAffinity) * (mode === "trade" ? 1 : 0.58);
+      const socialOpenness = ((from.openness ?? 0.5) + (to.openness ?? 0.5)) / 2;
+      const strength = readiness * (0.65 + socialOpenness * 0.5) * (1 - distance / 132) * span * Math.max(0.18, linguisticAffinity) * (mode === "trade" ? 1 : 0.58);
       const fromEffect = effects.get(from.id) as NetworkEffect;
       const toEffect = effects.get(to.id) as NetworkEffect;
       if (mode === "trade") {

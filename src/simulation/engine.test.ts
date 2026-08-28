@@ -8,7 +8,7 @@ import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./lin
 import { runExperiment } from "./experiment.ts";
 import { createWorldManifest } from "./manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./chronicle.ts";
-import { HouseholdSystem } from "./households.ts";
+import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy } from "./households.ts";
 import { evolveInstitutions, institutionEffects } from "./institutions.ts";
 import { evolveInnovations, innovationEffects } from "./innovation.ts";
 import { settleShipment } from "./market.ts";
@@ -61,11 +61,28 @@ assert.equal(chronicle.getCheckpoints()[0]?.year, 2, "chronicle checkpoints shou
 
 const households = new HouseholdSystem();
 const householdMetrics = households.advance([
-  { id: "a", regionId: "player", homeKey: "0,0", age: 24, role: "farmer", seed: 0.2 },
-  { id: "b", regionId: "player", homeKey: "0,0", age: 8, role: "villager", seed: 0.4 },
+  { id: "a", regionId: "player", homeKey: "0,0", age: 24, role: "farmer", seed: 0.2, strategy: initialBehavioralStrategy(0.2) },
+  { id: "b", regionId: "player", homeKey: "0,0", age: 8, role: "villager", seed: 0.4, strategy: initialBehavioralStrategy(0.4) },
 ], [{ id: "player", food: 1, housing: 1, mood: 25 }], 1).get("player");
 assert.ok((householdMetrics?.migrationPressure ?? 0) > 0.2, "hardship should create household-level migration pressure");
 assert.equal(householdMetrics?.dependents, 1, "households should retain demographic dependents alongside workers");
+const inheritedStrategy = inheritBehavioralStrategy({ mobility: 0.8, reserve: 0.3, tradeOpenness: 0.65 }, 0.42);
+assert.ok(Math.abs(inheritedStrategy.mobility - 0.8) <= 0.07 && Math.abs(inheritedStrategy.reserve - 0.3) <= 0.07, "children should inherit behavioral tendencies with bounded variation");
+const adaptation = new HouseholdSystem();
+const adaptiveResidents = [
+  { id: "dry-low", regionId: "dry", homeKey: "a", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.1, reserve: 0.5, tradeOpenness: 0.5 } },
+  { id: "dry-high", regionId: "dry", homeKey: "b", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.9, reserve: 0.5, tradeOpenness: 0.5 } },
+  { id: "lush-low", regionId: "lush", homeKey: "a", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.1, reserve: 0.5, tradeOpenness: 0.5 } },
+  { id: "lush-high", regionId: "lush", homeKey: "b", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.9, reserve: 0.5, tradeOpenness: 0.5 } },
+];
+let adaptiveMetrics: ReadonlyMap<string, import("./households.ts").HouseholdMetrics> | undefined;
+for (let year = 0; year < 40; year += 1) {
+  adaptiveMetrics = adaptation.advance(adaptiveResidents, [
+    { id: "dry", food: 1, housing: 3, mood: 35, environmentalStress: 0.95 },
+    { id: "lush", food: 18, housing: 3, mood: 72, environmentalStress: 0.05 },
+  ], 1);
+}
+assert.ok((adaptiveMetrics?.get("dry")?.strategy.mobility ?? 0) > (adaptiveMetrics?.get("lush")?.strategy.mobility ?? 1), "local hardship should select a more mobile household strategy than a secure region");
 
 const institutions = evolveInstitutions({ forms: [], legitimacy: 0.4, commonReserve: 0, inequality: 0.1 }, {
   inputs: { ...input, population: 9, buildings: { ...buildings, farm: 3, orchard: 1, shrine: 1, market: 1, mine: 1, forge: 1 }, disruption: "storm" },
@@ -120,6 +137,14 @@ const relay = exchangeRegions([
   return pair === "frontier:source" ? "none" : "trade";
 });
 assert.ok((relay.get("frontier")?.food ?? 0) > 0, "a connected crossroads should relay a decayed share of received food beyond its direct source");
+
+const exchangePair = [
+  { id: "open-source", q: 0, r: 0, population: 8, capacity: 12, food: 50, wood: 4, gold: 3, knowledge: 20, stability: 0.7, migrationPressure: 0.1, markets: 2, ports: 1, institutions: 2, openness: 1 },
+  { id: "open-destination", q: 4, r: 0, population: 8, capacity: 12, food: 1, wood: 4, gold: 3, knowledge: 2, stability: 0.7, migrationPressure: 0.1, markets: 2, ports: 1, institutions: 2, openness: 1 },
+] as const;
+const openExchange = exchangeRegions(exchangePair, 1);
+const guardedExchange = exchangeRegions(exchangePair.map((region) => ({ ...region, openness: 0 })), 1);
+assert.ok((openExchange.get("open-destination")?.food ?? 0) > (guardedExchange.get("open-destination")?.food ?? 0), "household trade openness should alter the material strength of an otherwise identical route");
 
 const first = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
 const second = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
