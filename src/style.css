@@ -20,7 +20,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #071018;
+  background: radial-gradient(circle at 24% 20%, rgba(69, 99, 160, .25), transparent 28%), radial-gradient(circle at 78% 66%, rgba(110, 51, 150, .2), transparent 34%), #02040c;
   color: var(--ink);
 }
 
@@ -29,6 +29,7 @@ body,
   width: 100%;
   height: 100%;
   cursor: crosshair;
+  background: radial-gradient(ellipse at center, rgba(15, 31, 52, .18), transparent 62%);
 }
 
 .vignette {

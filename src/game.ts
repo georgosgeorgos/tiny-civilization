@@ -371,7 +371,8 @@ export class Game {
     this.technology = Math.max(config.technology === "advanced" ? 90 : config.technology === "developing" ? 30 : 0, this.originProfile.knowledgeFloor);
     this.simulation = new SimulationClient(config.seed, startingStores, this.technology);
     this.weatherUntil = this.weatherDays + 0.75 * this.weatherPace;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
+    this.renderer.setClearColor(0x000000, this.spacecraftMode ? 0 : 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.renderScale));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -3128,7 +3129,7 @@ export class Game {
       this.moonDisc.visible = false;
       this.clouds.visible = false;
       this.water.mesh.visible = false;
-      this.scene.background = new THREE.Color(0x02050d);
+      this.scene.background = null;
       if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0;
       this.hemi.intensity = 0.72;
       this.hemi.color.setHex(0x9dc9ff);

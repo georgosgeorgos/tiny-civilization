@@ -22,6 +22,7 @@ export function createSpacecraftSystem(): SpacecraftSystem {
   const windowMaterial = new THREE.MeshStandardMaterial({ color: 0x5fc8df, emissive: 0x176e94, emissiveIntensity: 1.25, roughness: 0.18, metalness: 0.55 });
   const panelMaterial = new THREE.MeshStandardMaterial({ color: 0x18386a, emissive: 0x0b3264, emissiveIntensity: 0.42, roughness: 0.24, metalness: 0.66 });
   const beaconMaterial = new THREE.MeshStandardMaterial({ color: 0xffc26f, emissive: 0xff6a1c, emissiveIntensity: 2.2, roughness: 0.3 });
+  const engineMaterial = new THREE.MeshStandardMaterial({ color: 0x74d8ff, emissive: 0x168fe3, emissiveIntensity: 2.8, roughness: 0.16, metalness: 0.35 });
 
   const deck = shadow(new THREE.Mesh(new THREE.CylinderGeometry(18, 19.5, 0.42, 64), deckMaterial));
   deck.position.y = -0.58;
@@ -40,6 +41,48 @@ export function createSpacecraftSystem(): SpacecraftSystem {
   const spine = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.72, 3.4, 12), hull));
   spine.position.set(0, -2.1, 0);
   group.add(spine);
+
+  // A raised command module makes the habitat read as a vehicle from above,
+  // rather than a bare circular terrain deck.
+  const command = shadow(new THREE.Mesh(new THREE.CapsuleGeometry(1.15, 2.5, 8, 16), rim));
+  command.position.set(0, 1.3, -3.1);
+  command.rotation.x = Math.PI / 2;
+  group.add(command);
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.82, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), windowMaterial);
+  canopy.position.set(0, 1.92, -4.1);
+  group.add(canopy);
+
+  // Four long solar wings and their booms deliberately break the circular
+  // silhouette; this stays recognisable at the observer camera distance.
+  for (let i = 0; i < 4; i += 1) {
+    const angle = i * Math.PI / 2 + Math.PI / 4;
+    const boom = shadow(new THREE.Mesh(new THREE.BoxGeometry(9, 0.13, 0.22), rim));
+    boom.position.set(Math.cos(angle) * 21.5, 0.25, Math.sin(angle) * 21.5);
+    boom.rotation.y = -angle;
+    group.add(boom);
+    const wing = shadow(new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.065, 3.1), panelMaterial));
+    wing.position.set(Math.cos(angle) * 27.1, 0.25, Math.sin(angle) * 27.1);
+    wing.rotation.y = -angle;
+    group.add(wing);
+  }
+
+  // Engine bells and luminous cores are visible around the rim even when the
+  // camera is looking down on the settlement deck.
+  for (let i = 0; i < 4; i += 1) {
+    const angle = i * Math.PI / 2;
+    const x = Math.cos(angle) * 18.1;
+    const z = Math.sin(angle) * 18.1;
+    const pod = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.3, 2.4, 12), hull));
+    pod.position.set(x, -1.55, z);
+    pod.rotation.z = Math.PI / 2;
+    pod.rotation.y = angle;
+    group.add(pod);
+    const plume = new THREE.Mesh(new THREE.ConeGeometry(0.68, 1.8, 12), engineMaterial);
+    plume.position.set(x, -2.8, z);
+    plume.rotation.x = Math.PI;
+    plume.userData.phase = 4 + i * 0.47;
+    group.add(plume);
+  }
 
   for (let i = 0; i < 12; i += 1) {
     const angle = (i / 12) * Math.PI * 2;
