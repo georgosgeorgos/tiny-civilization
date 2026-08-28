@@ -192,4 +192,12 @@ export class HouseholdSystem {
     const household = this.households.get(`${resident.regionId}:${resident.homeKey}`);
     return household ? { ...household.strategy } : null;
   }
+
+  hardshipFor(residentId: string): number {
+    const resident = this.residents.get(residentId);
+    if (!resident) return 0;
+    const household = this.households.get(`${resident.regionId}:${resident.homeKey}`);
+    if (!household) return 0;
+    return household.rememberedHardship + (1 - household.cohesion) * 0.24 - household.strategy.reserve * 0.08;
+  }
 }

@@ -2914,7 +2914,10 @@ export class Game {
     const originTribe = originId !== "player";
     const resident = this.people
       .filter((person) => person.tribe === originTribe && (originTribe ? person.islandId === originId : true))
-      .sort((left, right) => right.strategy.mobility - left.strategy.mobility || left.age - right.age)[0];
+      // Displacement chooses households with the most urgent hardship. A
+      // mobile disposition instead improves coping after arrival, so scarcity
+      // does not automatically export the trait it is selecting for.
+      .sort((left, right) => this.households.hardshipFor(right.id) - this.households.hardshipFor(left.id) || left.seed - right.seed)[0];
     const destinationTribe = destinationId !== "player";
     const home = [...this.tiles.values()].find(
       (tile) =>

@@ -83,6 +83,12 @@ for (let year = 0; year < 40; year += 1) {
   ], 1);
 }
 assert.ok((adaptiveMetrics?.get("dry")?.strategy.mobility ?? 0) > (adaptiveMetrics?.get("lush")?.strategy.mobility ?? 1), "local hardship should select a more mobile household strategy than a secure region");
+const hardshipSelection = new HouseholdSystem();
+hardshipSelection.advance([
+  { id: "exposed", regionId: "shore", homeKey: "a", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.5, reserve: 0.05, tradeOpenness: 0.5 } },
+  { id: "buffered", regionId: "shore", homeKey: "b", age: 28, role: "farmer", seed: 0, strategy: { mobility: 0.5, reserve: 0.95, tradeOpenness: 0.5 } },
+], [{ id: "shore", food: 0.5, housing: 3, mood: 25, environmentalStress: 0.9 }], 4);
+assert.ok(hardshipSelection.hardshipFor("exposed") > hardshipSelection.hardshipFor("buffered"), "migration selection should follow household hardship rather than a mobility trait");
 
 const institutions = evolveInstitutions({ forms: [], legitimacy: 0.4, commonReserve: 0, inequality: 0.1 }, {
   inputs: { ...input, population: 9, buildings: { ...buildings, farm: 3, orchard: 1, shrine: 1, market: 1, mine: 1, forge: 1 }, disruption: "storm" },
