@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-export type Weather = "clear" | "rain" | "storm";
+export type Weather = "clear" | "overcast" | "rain" | "storm";
 
 export class LivingWorld {
   readonly group = new THREE.Group();
@@ -113,7 +113,7 @@ export class LivingWorld {
       fish.visible = hop > 0.02;
     }
 
-    const raining = weather !== "clear";
+    const raining = weather === "rain" || weather === "storm";
     const mat = this.rain.material as THREE.PointsMaterial;
     mat.opacity = raining ? (weather === "storm" ? 0.55 : 0.32) : 0;
     this.rain.visible = raining;

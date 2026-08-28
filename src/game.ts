@@ -187,6 +187,7 @@ const BUILDING_TECH: Record<BuildingId, number> = { hut: 1, farm: 1, fishery: 1,
 
 const WEATHER_COPY: Record<Weather, string> = {
   clear: "Skies clear. Good traveling weather.",
+  overcast: "Cloud cover settles in. The air is cool, but travel is still open.",
   rain: "Rain on the fields. Crops drink deep.",
   storm: "A storm rolls in. People slow, seas rise.",
 };
@@ -2288,8 +2289,15 @@ export class Game {
 
     if (!this.spacecraftMode && this.weatherDays >= this.weatherUntil) {
       const roll = hash2(Math.floor(this.weatherDays * 13), Math.floor(this.weatherDays));
-      const next: Weather = roll < 0.76 ? "clear" : roll < 0.94 ? "rain" : "storm";
-      const duration = next === "clear" ? 0.85 + roll * 1.1 : next === "rain" ? 0.12 + roll * 0.14 : 0.08 + roll * 0.1;
+      // Atmospheric presentation advances with the observer, not simulation
+      // speed. Overcast is deliberately separate from rain, so a lively sky
+      // does not imply permanent precipitation.
+      const seasonWetness = this.visualSeason === "Spring" ? 0.08 : this.visualSeason === "Autumn" ? 0.05 : this.visualSeason === "Winter" ? 0.035 : 0;
+      const clearCutoff = 0.48 - seasonWetness;
+      const overcastCutoff = 0.84 - seasonWetness * 0.45;
+      const rainCutoff = 0.97 - seasonWetness * 0.2;
+      const next: Weather = roll < clearCutoff ? "clear" : roll < overcastCutoff ? "overcast" : roll < rainCutoff ? "rain" : "storm";
+      const duration = next === "clear" ? 0.62 + roll * 0.72 : next === "overcast" ? 0.42 + roll * 0.46 : next === "rain" ? 0.16 + roll * 0.15 : 0.09 + roll * 0.11;
       this.weatherUntil = this.weatherDays + duration * this.weatherPace;
       if (next !== this.weather) {
         this.weather = next;
@@ -2329,7 +2337,7 @@ export class Game {
       }
     }
 
-    const weatherFarm = this.spacecraftMode ? 1.12 : this.weather === "rain" ? 1.28 : this.weather === "storm" ? 0.82 : 1;
+    const weatherFarm = this.spacecraftMode ? 1.12 : this.weather === "rain" ? 1.28 : this.weather === "storm" ? 0.82 : this.weather === "overcast" ? 0.96 : 1;
     const drought = this.event === "drought" ? 0.35 : 1;
     const ashFarm = this.event === "ash" ? 0.7 : 1;
     const playerYield = { food: 0, gold: 0, wood: 0 };
@@ -2972,13 +2980,13 @@ export class Game {
     this.renderer.toneMappingExposure = 0.72 + day * 0.42;
     this.scene.environmentIntensity = 0.12 + day * 0.2;
 
-    const storm = this.weather === "storm" ? 0.22 : this.weather === "rain" ? 0.1 : 0;
+    const storm = this.weather === "storm" ? 0.22 : this.weather === "rain" ? 0.1 : this.weather === "overcast" ? 0.045 : 0;
     const fog = day > 0.25 ? new THREE.Color().setHSL(0.48, this.visualStyle === "austere" ? 0.1 : 0.22, 0.55 + day * 0.12 - storm * 0.18) : new THREE.Color(this.visualStyle === "radiant" ? 0x10102e : 0x0b1522);
     if (this.event === "ash") fog.lerp(new THREE.Color(0x6a6058), 0.35);
     if (this.event === "drought") fog.lerp(new THREE.Color(0xc4b07a), 0.2);
     if (this.scene.fog instanceof THREE.FogExp2) {
       this.scene.fog.color.copy(fog);
-      this.scene.fog.density = this.weather === "storm" ? 0.0024 : this.weather === "rain" ? 0.0017 : 0.00115;
+      this.scene.fog.density = this.weather === "storm" ? 0.0024 : this.weather === "rain" ? 0.0017 : this.weather === "overcast" ? 0.00135 : 0.00115;
     }
     this.scene.background = fog.clone();
     const skyMat = this.skyDome.material as THREE.MeshBasicMaterial;
@@ -2994,14 +3002,14 @@ export class Game {
     const waterMat = this.water.mesh.material as THREE.MeshStandardMaterial;
     waterMat.color.set(day > 0.3 ? (this.weather === "storm" ? 0x0e5a62 : 0x14838a) : 0x0a2c38);
     this.sunLight.intensity = (0.15 + day * 2.95) * (this.weather === "storm" ? 0.55 : this.weather === "rain" ? 0.78 : 1);
-    this.hemi.intensity = (0.12 + day * 0.32) * (this.weather === "clear" ? 1 : 0.82);
+    this.hemi.intensity = (0.12 + day * 0.32) * (this.weather === "clear" ? 1 : this.weather === "overcast" ? 0.91 : 0.82);
     this.fill.intensity = (0.05 + day * 0.18) * (this.weather === "storm" ? 0.4 : 1);
     this.renderer.toneMappingExposure = (0.72 + day * 0.42) * (this.weather === "storm" ? 0.88 : 1);
     this.clouds.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       const mat = object.material as THREE.MeshStandardMaterial;
-      mat.color.setHex(this.weather === "storm" ? 0x8a94a0 : this.weather === "rain" ? 0xc8d0d8 : 0xfff4e4);
-      mat.opacity = this.weather === "clear" ? 0.82 : 0.9;
+      mat.color.setHex(this.weather === "storm" ? 0x8a94a0 : this.weather === "rain" ? 0xc8d0d8 : this.weather === "overcast" ? 0xb4bfca : 0xfff4e4);
+      mat.opacity = this.weather === "clear" ? 0.82 : this.weather === "overcast" ? 0.86 : 0.9;
     });
   }
 
@@ -3076,9 +3084,11 @@ export class Game {
                     ? "Wildfire"
             : this.weather === "clear"
               ? "Clear"
-              : this.weather === "rain"
-                ? "Rain"
-                : "Storm";
+              : this.weather === "overcast"
+                ? "Overcast"
+                : this.weather === "rain"
+                  ? "Rain"
+                  : "Storm";
     const simulation = this.simulation.snapshot;
     const localFoodNeed = Math.max(1, snap.people * 2.5);
     const outlook = simulation.mortalityRisk > 0.48
