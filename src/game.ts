@@ -870,6 +870,7 @@ export class Game {
       button.addEventListener("click", () => this.setObservatoryView(button.dataset.observatoryView as ObservatoryView));
     });
     document.querySelector<HTMLButtonElement>("#advance-century")?.addEventListener("click", () => this.advanceCenturyStep());
+    document.querySelector<HTMLButtonElement>("#recenter-view")?.addEventListener("click", () => this.recenterObserver());
     const speedSelector = document.querySelector<HTMLSelectElement>("#speed-selector");
     if (speedSelector) {
       speedSelector.value = String(this.speed);
@@ -1593,6 +1594,20 @@ export class Game {
     this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
     this.controls.update();
     this.setHint(distance < 120 ? "Local view. Observe the council's work close up." : distance < 900 ? "World view. Survey the societies." : "Space view. Observe the worlds beyond Tidelight.");
+  }
+
+  private recenterObserver(): void {
+    this.observerMove = null;
+    if (this.observatoryView === "universe") {
+      this.transitionToObservatoryView("universe", new THREE.Vector3(-300, 0, -100), new THREE.Vector3(-145, 390, 1220));
+    } else if (this.observatoryView === "subatomic") {
+      this.transitionToObservatoryView("subatomic", new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 42, 132));
+    } else if (this.spacecraftMode) {
+      this.frameObserver(new THREE.Vector3(0, 0, 0), 48);
+    } else {
+      this.frameObserver(new THREE.Vector3(0, 0, 0), 430);
+    }
+    this.setHint("Observer recentered on the active simulation view.");
   }
 
   private setObservatoryView(view: ObservatoryView): void {
