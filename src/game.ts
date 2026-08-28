@@ -942,14 +942,18 @@ export class Game {
     const direction = new THREE.Vector3().subVectors(this.camera.position, center);
     if (direction.lengthSq() < 0.001) direction.set(1.5, 0.8, 2.4);
     direction.normalize();
-    this.controls.target.copy(center);
-    this.camera.position.copy(center).addScaledVector(direction, radius * 3.5);
-    this.controls.update();
+    this.observerMove = {
+      fromTarget: this.controls.target.clone(),
+      toTarget: center,
+      fromPosition: this.camera.position.clone(),
+      toPosition: center.clone().addScaledVector(direction, radius * 3.5),
+      progress: 0,
+    };
     const name = String(body.userData.planetName);
     const copy = String(body.userData.planetCopy ?? "An uncharted neighboring world.");
     const readout = document.querySelector("#planet-readout");
     if (readout) readout.textContent = `Visiting ${name} · ${copy}`;
-    this.setHint(`Visiting ${name}. ${copy} Its civilization is not yet simulated, but its world can be observed here.`);
+    this.setHint(`Observer traveling to ${name}. ${copy} Its civilization is not yet simulated, but its world can be observed here.`);
   }
 
   private travelObserverTo(target: THREE.Vector3): void {
