@@ -10,6 +10,10 @@ export const WORLD_CHUNK_SIZE = 24;
 /** Political control is deliberately separate from physical ownership. A tile can
  * be economically used, remembered after a collapse, or actively contested. */
 export type TerritorialClaim = "none" | "habitation" | "economic" | "sovereignty" | "memory" | "contested";
+export type HistoryMark = "cultivation" | "erosion" | "abandonment" | "trade";
+export type HistoryLayer = Record<HistoryMark, number>;
+
+const EMPTY_HISTORY: HistoryLayer = { cultivation: 0, erosion: 0, abandonment: 0, trade: 0 };
 
 export type StoredTile = {
   building: BuildingId | null;
@@ -21,6 +25,7 @@ export type StoredTile = {
   buildLeft: number;
   buildTotal: number;
   ready: boolean;
+  history: HistoryLayer;
 };
 
 export type WorldChunk = {
@@ -40,6 +45,7 @@ const EMPTY_TILE: StoredTile = {
   buildLeft: 0,
   buildTotal: 0,
   ready: false,
+  history: EMPTY_HISTORY,
 };
 
 export function chunkCoordinates(q: number, r: number): { q: number; r: number } {
@@ -79,11 +85,19 @@ export class WorldState {
     const chunk = this.chunkFor(q, r);
     chunk.lastTouched = ++this.tick;
     const key = hexKey(q, r);
-    if (!state.building && !state.owner && state.territory === "none") {
+    if (!state.building && !state.owner && state.territory === "none" && Object.values(state.history).every((value) => value <= 0)) {
       chunk.tiles.delete(key);
       return;
     }
     chunk.tiles.set(key, { ...state });
+  }
+
+  /** Durable physical memory remains even when a render chunk is unloaded. */
+  markHistory(q: number, r: number, mark: HistoryMark, amount: number): HistoryLayer {
+    const prior = this.tile(q, r);
+    const history = { ...prior.history, [mark]: Math.min(1, prior.history[mark] + Math.max(0, amount)) };
+    this.save(q, r, { ...prior, history });
+    return history;
   }
 
   hasBuilding(q: number, r: number): boolean {

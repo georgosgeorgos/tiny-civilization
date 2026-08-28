@@ -67,7 +67,7 @@ import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade,
 import { advanceRegionalRelation, createRegionalRelation, regionalRelationMode, type RegionalRelation } from "./simulation/interregional.ts";
 import { TerrainChunks } from "./terrain-chunks";
 import { WorldState } from "./world-state";
-import type { TerritorialClaim } from "./world-state";
+import type { HistoryLayer, HistoryMark, TerritorialClaim } from "./world-state";
 import { createSpacecraftSystem, type SpacecraftSystem } from "./spacecraft";
 import { createSubatomicSystem, type SubatomicSystem } from "./subatomic";
 import { originProfile, type OriginProfile } from "./origins";
@@ -223,6 +223,7 @@ type Tile = {
   buildLeft: number;
   buildTotal: number;
   ready: boolean;
+  historyMesh: THREE.Group | null;
 };
 
 export class Game {
@@ -689,8 +690,11 @@ export class Game {
       buildLeft: 0,
       buildTotal: 0,
       ready: false,
+      historyMesh: null,
     });
-    if (stored.building) this.restoreBuilding(this.tiles.get(hexKey(q, r)) as Tile, stored);
+    const tile = this.tiles.get(hexKey(q, r)) as Tile;
+    this.paintStratigraphy(tile, stored.history);
+    if (stored.building) this.restoreBuilding(tile, stored);
   }
 
   private applyVisualStyle(top: THREE.Color, cliff: THREE.Color): void {
@@ -740,6 +744,55 @@ export class Game {
     const color = tile.baseTop.clone();
     this.applyTerritoryColor(color, tile.owner, tile.territory);
     tile.topMat.color.copy(color);
+  }
+
+  /** Render the durable residue of previous land use as low, translucent
+   * marks: field contours, erosion, abandoned foundations and route traces. */
+  private paintStratigraphy(tile: Tile, history: HistoryLayer): void {
+    if (tile.historyMesh) tile.mesh.remove(tile.historyMesh);
+    const layer = new THREE.Group();
+    const addDisc = (radius: number, color: number, opacity: number) => {
+      const mark = new THREE.Mesh(new THREE.CircleGeometry(radius, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }));
+      mark.rotation.x = -Math.PI / 2;
+      mark.position.y = 0.507;
+      layer.add(mark);
+    };
+    if (history.cultivation > 0.03) {
+      for (const radius of [0.24, 0.4]) {
+        const contour = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.025, 6), new THREE.MeshBasicMaterial({ color: 0xb38b47, transparent: true, opacity: history.cultivation * 0.38, depthWrite: false, side: THREE.DoubleSide }));
+        contour.rotation.x = -Math.PI / 2;
+        contour.position.y = 0.509;
+        layer.add(contour);
+      }
+    }
+    if (history.erosion > 0.03) addDisc(0.34, 0x473228, history.erosion * 0.32);
+    if (history.abandonment > 0.03) {
+      const footprint = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.32, 4), new THREE.MeshBasicMaterial({ color: 0x9d86a5, transparent: true, opacity: history.abandonment * 0.44, depthWrite: false, side: THREE.DoubleSide }));
+      footprint.rotation.x = -Math.PI / 2;
+      footprint.rotation.z = Math.PI / 4;
+      footprint.position.y = 0.511;
+      layer.add(footprint);
+    }
+    if (history.trade > 0.03) {
+      const route = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.455, 6), new THREE.MeshBasicMaterial({ color: 0xd8aa55, transparent: true, opacity: history.trade * 0.36, depthWrite: false, side: THREE.DoubleSide }));
+      route.rotation.x = -Math.PI / 2;
+      route.position.y = 0.513;
+      layer.add(route);
+    }
+    if (layer.children.length === 0) return;
+    tile.historyMesh = layer;
+    tile.mesh.add(layer);
+  }
+
+  private recordStratigraphy(tile: Tile, mark: HistoryMark, amount: number): void {
+    this.paintStratigraphy(tile, this.worldState.markHistory(tile.q, tile.r, mark, amount));
+  }
+
+  private recordRegionalStratigraphy(id: string, mark: HistoryMark, amount: number): void {
+    const tile = id === "player"
+      ? [...this.tiles.values()].find((candidate) => candidate.owner === "player" && candidate.ready)
+      : [...this.tiles.values()].find((candidate) => candidate.islandId === id && candidate.owner === "tribe" && candidate.ready);
+    if (tile) this.recordStratigraphy(tile, mark, amount);
   }
 
   private restoreBuilding(tile: Tile, stored: import("./world-state").StoredTile): void {
@@ -1159,6 +1212,8 @@ export class Game {
       this.popIns.push({ object: tile.buildingMesh, t: 0, target: 1.22 });
     }
     const def = BUILDINGS[tile.building];
+    if (tile.building === "farm" || tile.building === "orchard") this.recordStratigraphy(tile, "cultivation", 0.28);
+    if (tile.building === "lumber" || tile.building === "mine") this.recordStratigraphy(tile, "erosion", 0.16);
     this.claimTerritory(tile);
     this.markRoads(tile);
     this.attachPort(tile);
@@ -1218,6 +1273,8 @@ export class Game {
       tile.topMat.color.lerp(new THREE.Color(0x6b5344), 0.12);
       const edge = [hexKey(tile.q, tile.r), hexKey(next.q, next.r)].sort().join(":");
       if (this.roadEdges.has(edge)) continue;
+      this.recordStratigraphy(next, "trade", 0.06);
+      this.recordStratigraphy(tile, "trade", 0.06);
       const start = this.tileTop(tile);
       const end = this.tileTop(next);
       const direction = new THREE.Vector3().subVectors(end, start);
@@ -1992,6 +2049,7 @@ export class Game {
       } else {
         if (wasHome && tile.buildingMesh) tile.mesh.remove(tile.buildingMesh);
         if (wasHome) {
+          this.recordStratigraphy(tile, "abandonment", 0.42);
           tile.building = null;
           tile.buildingMesh = null;
           tile.owner = null;
@@ -2694,6 +2752,7 @@ export class Game {
       buildLeft: tile.buildLeft,
       buildTotal: tile.buildTotal,
       ready: tile.ready,
+      history: this.worldState.tile(tile.q, tile.r).history,
     });
   }
 
@@ -2839,6 +2898,8 @@ export class Game {
       );
       this.communicationGroup.add(line, pulse);
       this.communicationLinks.set(key, { source: from, destination: to, line, pulse, mode });
+      this.recordRegionalStratigraphy("player", "trade", mode === "trade" ? 0.14 : 0.06);
+      this.recordRegionalStratigraphy(region.id, "trade", mode === "trade" ? 0.14 : 0.06);
       this.setHint(`${mode === "trade" ? "A trade corridor" : "A cautious signal corridor"} opens with ${this.societies.get(region.id)?.name ?? "a neighboring region"}. ${mode === "trade" ? "Goods, people, and knowledge" : "Ideas and customs"} can now travel visibly.`);
     }
     // Autonomous societies can communicate with one another even when the
@@ -2878,6 +2939,8 @@ export class Game {
         );
         this.communicationGroup.add(line, pulse);
         this.communicationLinks.set(key, { source: from, destination: to, line, pulse, mode });
+        this.recordRegionalStratigraphy(left.id, "trade", mode === "trade" ? 0.12 : 0.05);
+        this.recordRegionalStratigraphy(right.id, "trade", mode === "trade" ? 0.12 : 0.05);
       }
     }
     for (const [key, link] of this.communicationLinks) {
