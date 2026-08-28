@@ -14,6 +14,7 @@ import { evolveInnovations, innovationEffects } from "./innovation.ts";
 import { settleShipment } from "./market.ts";
 import { resolveConflict } from "./conflict.ts";
 import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage } from "./diplomacy.ts";
+import { makeBuilding } from "../models.ts";
 import type { SimulationInputs } from "./types.ts";
 
 const buildings = { hut: 3, farm: 2, mine: 0, fishery: 1, lumber: 1, shrine: 0, market: 1, orchard: 0, forge: 0 };
@@ -32,6 +33,8 @@ assert.equal(configFromSearch("").speed, 4, "a page opened without URL settings 
 assert.equal(configFromSearch("?origin=city").origin, "city", "origin scenarios should remain serializable in the world URL");
 assert.equal(configFromSearch("?origin=spacecraft").origin, "spacecraft", "the orbital habitat scenario should remain serializable in the world URL");
 assert.equal(configFromSearch("?archetype=shattered").archetype, "shattered", "world archetypes should remain serializable in the world URL");
+assert.ok(makeBuilding("hut", "camp").children.length >= 4, "frontier camps should render as clustered temporary shelter rather than a generic house");
+assert.ok(makeBuilding("farm", "agrarian").children.length > makeBuilding("farm", "rustic").children.length, "farming origins should visibly retain extra harvest infrastructure");
 
 const manifest = createWorldManifest(configFromSearch("?seed=91&archetype=continental&origin=farmers"), ["secure food"]);
 const experimentPlan = {

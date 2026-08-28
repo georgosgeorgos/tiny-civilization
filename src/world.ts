@@ -22,7 +22,7 @@ export type LandKind =
   | "metro"
   | "harbor";
 
-export type ArchStyle = "rustic" | "adobe" | "ash" | "ice" | "harbor" | "metro" | "ancient" | "orbital";
+export type ArchStyle = "rustic" | "camp" | "agrarian" | "adobe" | "ash" | "ice" | "harbor" | "metro" | "ancient" | "orbital";
 
 export type Biome =
   | "grass"

@@ -762,6 +762,59 @@ function makeHarborBuilding(id: BuildingId): THREE.Group {
   return makeMetroBuilding(id);
 }
 
+/** A frontier camp has temporary, clustered shelter rather than a miniature village. */
+function makeCampHut(): THREE.Group {
+  const group = new THREE.Group();
+  const mainTent = makeTent();
+  mainTent.position.set(-0.06, 0, 0.02);
+  mainTent.scale.setScalar(1.12);
+  group.add(mainTent);
+  for (const [x, z] of [[0.22, -0.18], [-0.22, -0.17]] as const) {
+    const tent = makeTent();
+    tent.position.set(x, 0, z);
+    tent.scale.setScalar(0.58);
+    tent.rotation.y = x * 3;
+    group.add(tent);
+  }
+  const ash = new THREE.MeshStandardMaterial({ color: 0x2f2924, roughness: 1, flatShading: true });
+  const embers = new THREE.MeshStandardMaterial({ color: 0xff9a3d, emissive: 0xb83712, emissiveIntensity: 1.1, roughness: 0.5, flatShading: true });
+  const ring = shadow(new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.017, 4, 8), ash));
+  ring.position.set(0.12, 0.022, 0.16);
+  ring.rotation.x = Math.PI / 2;
+  const fire = shadow(new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.13, 5), embers));
+  fire.position.set(0.12, 0.075, 0.16);
+  fire.userData.nightLight = true;
+  group.add(ring, fire);
+  return group;
+}
+
+function makeAgrarianBuilding(id: BuildingId): THREE.Group {
+  if (id === "hut") return makeAdobeHouse();
+  const group = makeRusticBuilding(id);
+  if (id === "farm" || id === "orchard") {
+    const straw = new THREE.MeshStandardMaterial({ color: 0xd5ae4c, roughness: 0.95, flatShading: true });
+    for (let i = 0; i < 2; i += 1) {
+      const bale = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 6), straw));
+      bale.rotation.z = Math.PI / 2;
+      bale.position.set(-0.28 + i * 0.11, 0.09, 0.22);
+      group.add(bale);
+    }
+  }
+  return group;
+}
+
+function makeRusticBuilding(id: BuildingId): THREE.Group {
+  if (id === "hut") return makeHut();
+  if (id === "farm") return makeFarm();
+  if (id === "mine") return makeMine();
+  if (id === "fishery") return makeFishery();
+  if (id === "lumber") return makeLumber();
+  if (id === "shrine") return makeShrine();
+  if (id === "market") return makeMarket();
+  if (id === "orchard") return makeOrchard();
+  return makeForge();
+}
+
 /** Orbital equivalents preserve the economy while giving each function a distinct habitat module. */
 function makeOrbitalBuilding(id: BuildingId): THREE.Group {
   const group = new THREE.Group();
@@ -812,19 +865,13 @@ export function makeBuilding(id: BuildingId, style: ArchStyle = "rustic"): THREE
   if (style === "orbital") return makeOrbitalBuilding(id);
   if (style === "metro") return makeMetroBuilding(id);
   if (style === "harbor") return makeHarborBuilding(id);
+  if (style === "camp" && id === "hut") return makeCampHut();
+  if (style === "agrarian") return makeAgrarianBuilding(id);
   if (id === "hut" && style === "adobe") return makeAdobeHouse();
   if (id === "hut" && style === "ice") return makeIceCabin();
   if (id === "hut" && style === "ash") return makeAshHut();
   if (id === "hut" && style === "ancient") return makeStoneHouse();
-  if (id === "hut") return makeHut();
-  if (id === "farm") return makeFarm();
-  if (id === "mine") return makeMine();
-  if (id === "fishery") return makeFishery();
-  if (id === "lumber") return makeLumber();
-  if (id === "shrine") return makeShrine();
-  if (id === "market") return makeMarket();
-  if (id === "orchard") return makeOrchard();
-  return makeForge();
+  return makeRusticBuilding(id);
 }
 
 export function ghostify(root: THREE.Object3D, color: number): void {

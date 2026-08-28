@@ -1721,7 +1721,9 @@ export class Game {
   private architectureFor(tile: Tile): import("./world").ArchStyle {
     if (this.spacecraftMode) return "orbital";
     // The same procedural terrain can host a materially different first
-    // society: city foundations use civic stone-and-metal forms from day one.
+    // society: origins leave distinct material traces from day one.
+    if (tile.owner === "player" && this.origin === "camp" && this.simulation.snapshot.era === "Camp") return "camp";
+    if (tile.owner === "player" && this.origin === "farmers") return "agrarian";
     if (tile.owner === "player" && this.origin === "city") return "metro";
     return styleForKind(tile.kind);
   }
