@@ -2787,6 +2787,18 @@ export class Game {
     return residents.reduce((total, person) => total + person.strategy.tradeOpenness, 0) / residents.length;
   }
 
+  private regionalTerrainCost(id: string): number {
+    const hub = id === "player"
+      ? [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.ready)
+      : [...this.tiles.values()].find((tile) => tile.islandId === id && tile.owner === "tribe" && tile.ready);
+    if (!hub) return 1.25;
+    let cost = hub.terrain === "mountain" ? 2.5 : hub.terrain === "hill" ? 1.45 : 1;
+    if (hub.biome === "jungle" || hub.biome === "swamp") cost += 0.32;
+    if (hub.biome === "desert" || hub.biome === "snow") cost += 0.22;
+    if (hub.coast && (hub.building === "market" || hub.building === "fishery")) cost -= 0.22;
+    return Math.max(0.7, cost);
+  }
+
   private exchangeBetweenRegions(years: number): void {
     const player = this.civSnapshot();
     const playerSim = this.simulation.snapshot;
@@ -2798,6 +2810,7 @@ export class Game {
       markets: player.counts.market, ports: playerInfrastructure.ports,
       institutions: player.counts.market + player.counts.shrine + player.counts.forge,
       openness: this.regionalTradeOpenness("player"),
+      terrainCost: this.regionalTerrainCost("player"),
       culture: playerSim.culture.traits,
       language: playerSim.culture.language,
     }];
@@ -2813,6 +2826,7 @@ export class Game {
         ports: tiles.filter((tile) => tile.coast && (tile.building === "market" || tile.building === "fishery")).length,
         institutions: tiles.filter((tile) => tile.building === "market" || tile.building === "shrine" || tile.building === "forge").length,
         openness: this.regionalTradeOpenness(society.islandId),
+        terrainCost: this.regionalTerrainCost(society.islandId),
         culture: society.culture.traits,
         language: society.culture.language,
       });

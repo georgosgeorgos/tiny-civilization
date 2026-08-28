@@ -151,6 +151,8 @@ const exchangePair = [
 const openExchange = exchangeRegions(exchangePair, 1);
 const guardedExchange = exchangeRegions(exchangePair.map((region) => ({ ...region, openness: 0 })), 1);
 assert.ok((openExchange.get("open-destination")?.food ?? 0) > (guardedExchange.get("open-destination")?.food ?? 0), "household trade openness should alter the material strength of an otherwise identical route");
+const mountainExchange = exchangeRegions(exchangePair.map((region) => ({ ...region, terrainCost: 2.5 })), 1);
+assert.ok((mountainExchange.get("open-destination")?.food ?? 0) < (openExchange.get("open-destination")?.food ?? 0), "rough terrain should reduce exchange despite equal straight-line distance");
 
 const first = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
 const second = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
