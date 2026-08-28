@@ -21,6 +21,8 @@ export type CivHudState = {
   health: number;
   land: number;
   culture: string;
+  outlook: string;
+  cause: string;
   scenario?: "planet" | "spacecraft";
 };
 
@@ -42,6 +44,8 @@ export class Hud {
   private readonly health = document.querySelector<HTMLElement>("#stat-health");
   private readonly land = document.querySelector<HTMLElement>("#stat-land");
   private readonly culture = document.querySelector<HTMLElement>("#stat-culture");
+  private readonly outlook = document.querySelector<HTMLElement>("#system-outlook");
+  private readonly cause = document.querySelector<HTMLElement>("#system-cause");
 
   setHint(text: string): void {
     if (this.hint) this.hint.textContent = text;
@@ -66,6 +70,8 @@ export class Hud {
     if (this.technology) this.technology.textContent = `Tech ${state.technology}`;
     if (this.evolution) this.evolution.textContent = `${state.evolution} · cap ${state.capacity}`;
     if (this.culture) this.culture.textContent = state.culture;
+    if (this.outlook) this.outlook.textContent = state.outlook;
+    if (this.cause) this.cause.textContent = state.cause;
     this.setResource(this.health, "Health", state.health, state.health);
     this.setResource(this.land, spacecraft ? "Hull" : "Land", state.land, state.land);
   }

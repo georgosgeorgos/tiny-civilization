@@ -240,6 +240,9 @@ body,
 }
 
 .observer-title { color: var(--ink); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.system-reading { display: grid; gap: 2px; margin-top: 9px; padding: 8px 9px; border-radius: 9px; background: rgba(136, 210, 183, .08); border: 1px solid rgba(136, 210, 183, .12); }
+.system-reading strong { color: #def8ec; font: 700 12px/1.2 "Segoe UI", sans-serif; }
+.system-reading span { color: #a7bbb4; font: 11px/1.35 "Segoe UI", sans-serif; }
 .observer p { margin: 8px 0 0; color: #9eb0ac; }
 .activity-feed { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
 .activity-feed li { border-left: 2px solid rgba(124, 224, 194, .65); padding-left: 7px; }

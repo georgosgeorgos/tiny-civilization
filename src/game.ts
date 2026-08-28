@@ -1039,7 +1039,11 @@ export class Game {
       const society = societies[this.societyLensIndex % Math.max(1, societies.length)];
       this.societyLensIndex += 1;
       const center = society && [...this.tiles.values()].find((tile) => tile.islandId === society.islandId && tile.owner === "tribe" && tile.ready);
-      if (center && society) frame(center, 56, `${society.name} lens. Its needs and institutions evolve independently.`);
+      if (center && society) {
+        const channel = society.diplomacy;
+        const relation = channel.treaty === "trade-pact" ? "trade pact" : channel.treaty === "parley" ? "cautious parley" : channel.treaty === "hostile" ? "closed border" : "no accord";
+        frame(center, 56, `${society.name} lens. Its needs evolve independently; current relation: ${relation}, trust ${Math.round(channel.trust * 100)}%.`);
+      }
       else this.setHint("No neighboring society is within the observed world yet.");
       return;
     }
@@ -3069,6 +3073,30 @@ export class Game {
               : this.weather === "rain"
                 ? "Rain"
                 : "Storm";
+    const simulation = this.simulation.snapshot;
+    const localFoodNeed = Math.max(1, snap.people * 2.5);
+    const outlook = simulation.mortalityRisk > 0.48
+      ? "Demographic crisis"
+      : this.food < localFoodNeed * 0.55
+        ? "Food reserves are thinning"
+        : simulation.migrationPressure > 0.42
+          ? "Households are looking outward"
+          : simulation.ecology.disease > 0.48
+            ? "Public health is under strain"
+            : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
+              ? "The land is carrying a cost"
+              : "Conditions are broadly stable";
+    const cause = simulation.mortalityRisk > 0.48
+      ? "Scarcity, ecological stress, or disease is now affecting the population."
+      : this.food < localFoodNeed * 0.55
+        ? "Production and stored staples are below the settlement’s near-term needs."
+        : simulation.migrationPressure > 0.42
+          ? "Crowding, remembered hardship, or weak local opportunity is increasing migration pressure."
+          : simulation.ecology.disease > 0.48
+            ? "Dense settlement and stressed water create a disease burden; care institutions and waterworks help."
+            : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
+              ? "Extraction and climate are weakening soil or water faster than they recover."
+              : "The council’s current institutions, ecology, and stores are in a workable balance.";
     this.hud.refresh({
       year: yearFromDays(this.simDays), season: this.season, era: eraName(snap.people, snap.buildingTotal),
       goal: this.goalLabel(),
@@ -3076,11 +3104,13 @@ export class Game {
       food: this.food, wood: this.wood, mood: this.mood, people: snap.people,
       others: this.people.filter((person) => person.tribe).length, towns: this.societies.size, tradeRoutes: this.tradeRoutes.size, housing: snap.housing,
       technology: this.techLevel(),
-      evolution: this.simulation.snapshot.era,
-      capacity: this.simulation.snapshot.populationCapacity,
-      health: Math.round(this.simulation.snapshot.health * 100),
-      land: this.spacecraftMode ? Math.round(this.hullIntegrity) : Math.round(((this.simulation.snapshot.ecology.soil + this.simulation.snapshot.ecology.forest + this.simulation.snapshot.ecology.fish) / 3) * 100),
-      culture: `${this.simulation.snapshot.culture.language.dialect} · ${this.simulation.snapshot.culture.practices[0] ?? "unsettled custom"}`,
+      evolution: simulation.era,
+      capacity: simulation.populationCapacity,
+      health: Math.round(simulation.health * 100),
+      land: this.spacecraftMode ? Math.round(this.hullIntegrity) : Math.round(((simulation.ecology.soil + simulation.ecology.forest + simulation.ecology.fish) / 3) * 100),
+      culture: `${simulation.culture.language.dialect} · ${simulation.culture.practices[0] ?? "unsettled custom"}`,
+      outlook,
+      cause,
       scenario: this.spacecraftMode ? "spacecraft" : "planet",
     });
     if (this.citizens().length > 0 && this.food < 1) this.setHint("The village is hungry. Auto will try a farm or fishery.");
