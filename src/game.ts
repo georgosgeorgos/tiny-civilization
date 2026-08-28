@@ -1612,6 +1612,9 @@ export class Game {
 
   private setObservatoryView(view: ObservatoryView): void {
     if (view === "world") {
+      this.camera.near = 0.4;
+      this.camera.far = 9000;
+      this.camera.updateProjectionMatrix();
       this.observerMove = null;
       this.observatoryView = view;
       this.refreshViewReadout();
@@ -1621,11 +1624,17 @@ export class Game {
       return;
     }
     if (view === "universe") {
+      this.camera.near = 4;
+      this.camera.far = 30000;
+      this.camera.updateProjectionMatrix();
       this.transitionToObservatoryView(view, new THREE.Vector3(-300, 0, -100), new THREE.Vector3(-145, 390, 1220));
       this.setPlanetReadout("Select a planet to visit");
       this.setHint("Universe view. Tidelight and its neighboring worlds are shown at a stable astronomical scale.");
       return;
     }
+    this.camera.near = 0.05;
+    this.camera.far = 1200;
+    this.camera.updateProjectionMatrix();
     this.transitionToObservatoryView(view, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 42, 132));
     this.setPlanetReadout("Subatomic observation lens");
     this.setHint("Subatomic view. This is an observational lens: a stylized atom, energy cloud, and orbitals—not a separate game system.");
