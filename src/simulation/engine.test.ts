@@ -164,7 +164,7 @@ crowdedExtraction.advanceYears({
   infrastructure: { roads: 1, ports: 0, tradeRoutes: 0 },
 }, 80);
 assert.ok(crowdedExtraction.snapshot.stores.wood <= 291 && crowdedExtraction.snapshot.stores.gold <= 216, "long-horizon stores should remain constrained by physical storage capacity");
-assert.ok(crowdedExtraction.snapshot.mortalityRisk > 0.7 && crowdedExtraction.snapshot.populationTrend < 0, "dense ecological degradation should produce a visible demographic crisis rather than perpetual growth");
+assert.ok(crowdedExtraction.snapshot.ecology.forest < 0.5 && crowdedExtraction.snapshot.populationTrend < 0, "dense ecological degradation should constrain carrying capacity and produce demographic decline rather than perpetual growth");
 
 const evolved = new SimulationEngine(33, { food: 80, wood: 60, gold: 80 }, 180);
 evolved.advanceYears({

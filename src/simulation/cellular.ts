@@ -3,6 +3,11 @@ import { SeededRandom } from "./random.ts";
 import type { ClimateForcing } from "./climate.ts";
 import type { CultureTraits, SimulationInputs } from "./types.ts";
 
+const LAND_USE: Record<BuildingId, number> = {
+  hut: 1, farm: 2, orchard: 3, lumber: 4, fishery: 5, mine: 6, market: 7, shrine: 8, forge: 9,
+};
+const BUILDING_FOR_USE = Object.entries(LAND_USE).map(([building, use]) => ({ building: building as BuildingId, use }));
+
 export type CellularMetrics = {
   soil: number;
   forest: number;
@@ -32,6 +37,10 @@ export class CellularEcology {
   private readonly disease: Float32Array;
   private readonly settlement: Float32Array;
   private readonly suitability: Float32Array;
+  /** A persistent micro-land-use map. Counts still keep the simulation cheap,
+   * but every work occupies one actual cell and competes for an eligible site. */
+  private readonly landUse: Uint8Array;
+  private rebalanceDays = 0;
 
   constructor(seed: number) {
     const length = this.size * this.size;
@@ -43,6 +52,7 @@ export class CellularEcology {
     this.disease = new Float32Array(length);
     this.settlement = new Float32Array(length);
     this.suitability = new Float32Array(length);
+    this.landUse = new Uint8Array(length);
     const random = new SeededRandom(seed ^ 0x6d2b79f5);
     for (let i = 0; i < length; i += 1) {
       this.suitability[i] = 0.35 + random.next() * 0.65;
@@ -69,15 +79,23 @@ export class CellularEcology {
     const mineralsNext = new Float32Array(length);
     const diseaseNext = new Float32Array(length);
     const settlementNext = new Float32Array(length);
-    const buildingsTotal = Object.values(buildings).reduce((total, value) => total + value, 0);
+    this.reconcileLandUse(buildings);
+    this.rebalanceDays += days;
+    if (this.rebalanceDays >= 3) {
+      this.rebalanceDays = 0;
+      this.rebalanceLandUse();
+    }
     const stewardship = culture?.stewardship ?? 0.45;
     const cooperation = culture?.cooperation ?? 0.45;
     const resilience = culture?.resilience ?? 0.45;
-    const farmPressure = buildings.farm / length * (1 - stewardship * 0.24);
-    const woodPressure = buildings.lumber / length * (1 - stewardship * 0.32);
-    const fishPressure = buildings.fishery / length * (1 - stewardship * 0.2);
-    const minePressure = buildings.mine / length;
-    const urbanPressure = buildingsTotal / length;
+    const useCounts = this.landUseCounts();
+    // A work's cell is the intense local footprint; dust, runoff, roads, and
+    // harvesting pressure also extend lightly across its region. This avoids
+    // a saturated single cell masking a real regional carrying-cost.
+    const regionalFarmPressure = ((useCounts[LAND_USE.farm] ?? 0) + (useCounts[LAND_USE.orchard] ?? 0)) / length * 0.34 * (1 - stewardship * 0.24);
+    const regionalWoodPressure = (useCounts[LAND_USE.lumber] ?? 0) / length * 2.0 * (1 - stewardship * 0.32);
+    const regionalFishPressure = (useCounts[LAND_USE.fishery] ?? 0) / length * 0.3 * (1 - stewardship * 0.2);
+    const regionalMinePressure = (useCounts[LAND_USE.mine] ?? 0) / length * 0.24;
     const disaster = disruption === "drought" ? 0.11 : disruption === "flood" ? 0.07 : disruption === "wildfire" ? 0.16 : disruption === "ash" ? 0.05 : 0;
     const rainfall = climate?.rainfall ?? 0.58;
     const drought = Math.max(disruption === "drought" ? 0.68 : 0, climate?.drought ?? 0);
@@ -89,7 +107,12 @@ export class CellularEcology {
         const coast = i % this.size === 0 || i % this.size === this.size - 1 ? 1 : 0;
         const suitability = this.suitability[i];
         const localSettlement = this.settlement[i];
-        const buildingHere = Math.max(0, urbanPressure * (0.25 + suitability * 1.6) - localSettlement * 0.04);
+        const use = this.landUse[i] ?? 0;
+        const farmPressure = regionalFarmPressure + ((use === LAND_USE.farm || use === LAND_USE.orchard) ? (1 - stewardship * 0.24) : 0);
+        const woodPressure = regionalWoodPressure + (use === LAND_USE.lumber ? (1 - stewardship * 0.32) : 0);
+        const fishPressure = regionalFishPressure + (use === LAND_USE.fishery ? (1 - stewardship * 0.2) : 0);
+        const minePressure = regionalMinePressure + (use === LAND_USE.mine ? 1 : 0);
+        const buildingHere = use === 0 ? 0 : Math.max(0, 0.25 + suitability * 1.6 - localSettlement * 0.04);
         soilNext[i] = clamp(this.soil[i] + dt * (0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
         forestNext[i] = clamp(this.forest[i] + dt * (0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
         fishNext[i] = clamp(this.fish[i] + dt * (0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
@@ -136,6 +159,70 @@ export class CellularEcology {
       count += 1;
     }
     return { forest: forest / Math.max(1, count), fish: fish / Math.max(1, count), water: water / Math.max(1, count), minerals: minerals / Math.max(1, count) };
+  }
+
+  /** Add works to their best remaining cells and remove only surplus works.
+   * Existing choices persist, which lets a settlement remember its land use. */
+  private reconcileLandUse(buildings: Record<BuildingId, number>): void {
+    for (const { building, use } of BUILDING_FOR_USE) {
+      const desired = Math.max(0, Math.floor(buildings[building] ?? 0));
+      const occupied: number[] = [];
+      for (let i = 0; i < this.landUse.length; i += 1) if (this.landUse[i] === use) occupied.push(i);
+      if (occupied.length > desired) {
+        for (const index of occupied.slice(desired)) this.landUse[index] = 0;
+        continue;
+      }
+      for (let needed = desired - occupied.length; needed > 0; needed -= 1) {
+        let best = -1;
+        let bestScore = -Infinity;
+        for (let i = 0; i < this.landUse.length; i += 1) {
+          if (this.landUse[i] !== 0) continue;
+          const score = this.siteScore(i, building);
+          if (score > bestScore) { best = i; bestScore = score; }
+        }
+        if (best < 0) break;
+        this.landUse[best] = use;
+      }
+    }
+  }
+
+  private siteScore(index: number, building: BuildingId): number {
+    const coast = index % this.size === 0 || index % this.size === this.size - 1 ? 1 : 0;
+    const tieBreaker = ((index * 47) % 29) * 0.0001;
+    if (building === "farm") return this.soil[index] * 1.1 + this.water[index] * 0.8 + this.suitability[index] * 0.25 + tieBreaker;
+    if (building === "orchard") return this.soil[index] * 0.8 + this.forest[index] * 0.55 + this.water[index] * 0.35 + tieBreaker;
+    if (building === "lumber") return this.forest[index] * 1.3 + this.suitability[index] * 0.2 + tieBreaker;
+    if (building === "fishery") return coast * 1.6 + this.fish[index] * 0.7 + tieBreaker;
+    if (building === "mine") return this.minerals[index] * 1.35 + (1 - this.water[index]) * 0.12 + tieBreaker;
+    if (building === "hut") return this.suitability[index] * 0.75 + this.water[index] * 0.28 + this.soil[index] * 0.16 + tieBreaker;
+    return this.suitability[index] * 0.65 + this.settlement[index] * 0.2 + tieBreaker;
+  }
+
+  /** A settlement may slowly abandon a damaged plot for a better vacant one.
+   * At most one work of each kind moves per seasonal interval, preserving
+   * history without allowing a frozen first-build order to decide everything. */
+  private rebalanceLandUse(): void {
+    for (const { building, use } of BUILDING_FOR_USE) {
+      let worst = -1;
+      let worstScore = Infinity;
+      let best = -1;
+      let bestScore = -Infinity;
+      for (let i = 0; i < this.landUse.length; i += 1) {
+        const score = this.siteScore(i, building);
+        if (this.landUse[i] === use && score < worstScore) { worst = i; worstScore = score; }
+        if (this.landUse[i] === 0 && score > bestScore) { best = i; bestScore = score; }
+      }
+      if (worst >= 0 && best >= 0 && bestScore > worstScore + 0.12) {
+        this.landUse[worst] = 0;
+        this.landUse[best] = use;
+      }
+    }
+  }
+
+  private landUseCounts(): Uint16Array {
+    const counts = new Uint16Array(10);
+    for (const use of this.landUse) counts[use] += 1;
+    return counts;
   }
 
   private metrics(): CellularMetrics {
