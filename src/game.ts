@@ -3146,11 +3146,11 @@ export class Game {
       this.water.mesh.visible = false;
       this.scene.background = null;
       if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0;
-      this.hemi.intensity = 0.72;
+      this.hemi.intensity = 0.18;
       this.hemi.color.setHex(0x9dc9ff);
       this.hemi.groundColor.setHex(0x111827);
-      this.fill.intensity = 0.5;
-      this.sunLight.intensity = 1.85;
+      this.fill.intensity = 0.08;
+      this.sunLight.intensity = 2.8;
       this.sunLight.color.setHex(0xe4f3ff);
       this.sunLight.position.set(14, 28, 12);
       this.sunLight.target.position.set(0, 0, 0);

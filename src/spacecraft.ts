@@ -24,19 +24,21 @@ export function createSpacecraftSystem(): SpacecraftSystem {
   const beaconMaterial = new THREE.MeshStandardMaterial({ color: 0xffc26f, emissive: 0xff6a1c, emissiveIntensity: 2.2, roughness: 0.3 });
   const engineMaterial = new THREE.MeshStandardMaterial({ color: 0x74d8ff, emissive: 0x168fe3, emissiveIntensity: 2.8, roughness: 0.16, metalness: 0.35 });
 
-  const deck = shadow(new THREE.Mesh(new THREE.CylinderGeometry(18, 19.5, 0.42, 64), deckMaterial));
+  const deck = shadow(new THREE.Mesh(new THREE.CylinderGeometry(17.6, 18.1, 1.2, 64), deckMaterial));
   deck.position.y = -0.58;
   group.add(deck);
 
-  const outerRing = shadow(new THREE.Mesh(new THREE.TorusGeometry(18.2, 0.42, 10, 72), hull));
+  const outerRing = shadow(new THREE.Mesh(new THREE.TorusGeometry(18.2, 2.05, 16, 72), hull));
   outerRing.rotation.x = Math.PI / 2;
   outerRing.position.y = -0.26;
   group.add(outerRing);
+  outerRing.userData.spinHabitat = true;
 
-  const innerRing = shadow(new THREE.Mesh(new THREE.TorusGeometry(13.8, 0.11, 8, 64), rim));
+  const innerRing = shadow(new THREE.Mesh(new THREE.TorusGeometry(16.2, 0.16, 8, 64), rim));
   innerRing.rotation.x = Math.PI / 2;
   innerRing.position.y = -0.21;
   group.add(innerRing);
+  innerRing.userData.spinHabitat = true;
 
   const spine = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.72, 3.4, 12), hull));
   spine.position.set(0, -2.1, 0);
@@ -118,6 +120,8 @@ export function createSpacecraftSystem(): SpacecraftSystem {
     update(time) {
       group.rotation.y = Math.sin(time * 0.035) * 0.012;
       for (const object of group.children) {
+        if (object.userData.spinHabitat) object.rotation.z = time * 0.075;
+        if (object instanceof THREE.Mesh && object.userData.phase !== undefined && object.geometry instanceof THREE.ConeGeometry) object.scale.setScalar(0.86 + Math.sin(time * 5 + Number(object.userData.phase)) * 0.14);
         if (!(object instanceof THREE.Mesh) || object.userData.phase === undefined) continue;
         const material = object.material as THREE.MeshStandardMaterial;
         material.emissiveIntensity = 0.8 + Math.sin(time * 2.4 + Number(object.userData.phase)) * 0.65;
