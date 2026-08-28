@@ -1,8 +1,10 @@
 import { hash2, hexDistance } from "./hex";
+import type { WorldArchetype } from "./config";
 
 export const WORLD_CELL = 36;
-export const VIEW_RADIUS = 64;
-export const UNLOAD_RADIUS = 88;
+/** Full-detail, interactive terrain radius. The instanced horizon extends beyond it. */
+export const VIEW_RADIUS = 30;
+export const UNLOAD_RADIUS = 46;
 
 export type LandKind =
   | "home"
@@ -20,7 +22,7 @@ export type LandKind =
   | "metro"
   | "harbor";
 
-export type ArchStyle = "rustic" | "adobe" | "ash" | "ice" | "harbor" | "metro" | "ancient";
+export type ArchStyle = "rustic" | "adobe" | "ash" | "ice" | "harbor" | "metro" | "ancient" | "orbital";
 
 export type Biome =
   | "grass"
@@ -90,13 +92,38 @@ const RING: Record<string, Island> = {
   "2,1": { q: 62, r: 36, radius: 8, kind: "volcano" },
 };
 
-export function islandInCell(cq: number, cr: number): Island | null {
+function seeded(seed: number, q: number, r: number): number {
+  return hash2(q + (seed % 997) * 0.173, r - (seed % 619) * 0.271);
+}
+
+const ARCHETYPE_KINDS: Record<WorldArchetype, LandKind[]> = {
+  archipelago: KINDS,
+  // Continental regions overlap into large, walkable landmasses. Their local
+  // kinds remain distinct so societies still have different pressures.
+  continental: ["continent", "continent", "continent", "continent", "continent", "jungle", "desert", "mesa", "ruins", "tundra", "harbor", "metro"],
+  shattered: ["atoll", "isles", "isles", "crystal", "volcano", "harbor", "ruins", "swamp", "tundra"],
+  frontier: ["jungle", "desert", "swamp", "volcano", "mesa", "crystal", "tundra", "ruins", "continent", "isles"],
+};
+
+function kindFor(seed: number, cq: number, cr: number, archetype: WorldArchetype): LandKind {
+  const kinds = ARCHETYPE_KINDS[archetype];
+  return kinds[Math.floor(seeded(seed, cq + 4, cr + 11) * kinds.length) % kinds.length] ?? "continent";
+}
+
+export function islandInCell(cq: number, cr: number, seed = 1337, archetype: WorldArchetype = "continental"): Island | null {
   const forced = RING[`${cq},${cr}`];
-  if (forced) return forced;
-  const spawn = hash2(cq * 31 + 7, cr * 17 + 3);
-  if (spawn < 0.3) return null;
-  const kind = KINDS[Math.floor(hash2(cq + 4, cr + 11) * KINDS.length) % KINDS.length] ?? "continent";
-  const radius =
+  if (forced?.kind === "home") return forced;
+  // The named inner-ring cells are guaranteed regional counterparts. Their
+  // form still changes with the seed, so every world has neighbors to develop
+  // and eventually connect with.
+  const rawSpawn = seeded(seed, cq * 31 + 7, cr * 17 + 3);
+  const spawn = forced ? 0.55 + rawSpawn * 0.45 : rawSpawn;
+  const threshold = archetype === "continental" ? 0.08 : archetype === "shattered" ? 0.44 : archetype === "frontier" ? 0.26 : 0.3;
+  if (spawn < threshold) return null;
+  // Landmark cells guarantee a rich neighborhood, while the seed decides their
+  // geography and specialization. A URL seed remains a reproducible chronicle.
+  const kind = kindFor(seed, cq, cr, archetype);
+  const baseRadius =
     kind === "continent"
       ? 12 + Math.floor(spawn * 7)
       : kind === "metro"
@@ -106,17 +133,23 @@ export function islandInCell(cq: number, cr: number): Island | null {
           : kind === "jungle"
             ? 9 + Math.floor(spawn * 4)
             : 7 + Math.floor(spawn * 4);
+  // A continental cell is not a tiny island: broad, overlapping influence
+  // circles form one irregular procedural mainland with regional interiors.
+  const radius = Math.max(
+    archetype === "continental" ? 16 : 4,
+    Math.round(baseRadius * (archetype === "continental" ? 1.78 : archetype === "shattered" ? 0.68 : archetype === "frontier" ? 0.92 : 1)),
+  );
   return {
-    q: cq * WORLD_CELL + Math.floor((hash2(cq + 1, cr) - 0.5) * 8),
-    r: cr * WORLD_CELL + Math.floor((hash2(cq, cr + 1) - 0.5) * 8),
+    q: cq * WORLD_CELL + Math.floor((seeded(seed, cq + 1, cr) - 0.5) * 8),
+    r: cr * WORLD_CELL + Math.floor((seeded(seed, cq, cr + 1) - 0.5) * 8),
     radius,
     kind,
   };
 }
 
-function covers(island: Island, q: number, r: number): { dist: number; warped: number } | null {
+function covers(island: Island, q: number, r: number, seed: number): { dist: number; warped: number } | null {
   const dist = hexDistance(q - island.q, r - island.r);
-  const warp = (hash2(q + island.q, r + island.r) - 0.5) * 2.2;
+  const warp = (seeded(seed, q + island.q, r + island.r) - 0.5) * 2.2;
   if (island.kind === "atoll") {
     const ring = Math.abs(dist - island.radius * 0.72);
     if (ring > 1.7 + warp * 0.3) return null;
@@ -138,15 +171,15 @@ function covers(island: Island, q: number, r: number): { dist: number; warped: n
   return { dist, warped: island.radius + warp };
 }
 
-function findIsland(q: number, r: number): { island: Island; dist: number; radius: number } | null {
+function findIsland(q: number, r: number, seed: number, archetype: WorldArchetype): { island: Island; dist: number; radius: number } | null {
   const cq = Math.floor(q / WORLD_CELL);
   const cr = Math.floor(r / WORLD_CELL);
   let best: { island: Island; dist: number; radius: number } | null = null;
   for (let dq = -1; dq <= 1; dq += 1) {
     for (let dr = -1; dr <= 1; dr += 1) {
-      const island = islandInCell(cq + dq, cr + dr);
+      const island = islandInCell(cq + dq, cr + dr, seed, archetype);
       if (!island) continue;
-      const hit = covers(island, q, r);
+      const hit = covers(island, q, r, seed);
       if (!hit) continue;
       if (!best || hit.dist < best.dist) best = { island, dist: hit.dist, radius: hit.warped };
     }
@@ -154,11 +187,11 @@ function findIsland(q: number, r: number): { island: Island; dist: number; radiu
   return best;
 }
 
-export function sampleWorld(q: number, r: number): WorldSample | null {
-  const hit = findIsland(q, r);
+export function sampleWorld(q: number, r: number, seed = 1337, archetype: WorldArchetype = "continental"): WorldSample | null {
+  const hit = findIsland(q, r, seed, archetype);
   if (!hit) return null;
   const { island, dist, radius } = hit;
-  const n = hash2(q, r);
+  const n = seeded(seed, q, r);
   const coast = dist >= radius - 1.05;
   let biome: Biome = "grass";
   let height = 0.35 + n * 0.2 + (1 - dist / Math.max(radius, 1)) * 0.45;

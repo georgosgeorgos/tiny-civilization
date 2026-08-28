@@ -10,7 +10,6 @@ import { hash2, hexDistance, hexesInRadius, hexKey, hexNeighbors, hexToWorld, wo
 import {
   createClouds,
   createEnvironment,
-  createHexRing,
   createSky,
   createSkyDome,
   createStars,
@@ -20,7 +19,6 @@ import {
 } from "./look";
 import {
   applySeasonPalette,
-  ghostify,
   makeBuilding,
   makeCliffMaterial,
   makeFlowers,
@@ -38,7 +36,6 @@ import {
 import { LivingWorld, type Weather } from "./life";
 import {
   SECONDS_PER_DAY,
-  SPEED_STEPS,
   YEAR_SECONDS,
   dayOfSeason,
   daylight,
@@ -50,15 +47,32 @@ import {
   yearFromDays,
   type Season,
 } from "./time";
-import { DISCOVER_COPY, UNLOAD_RADIUS, VIEW_RADIUS, sampleWorld, styleForKind, type Biome, type LandKind, type Terrain } from "./world";
+import { DISCOVER_COPY, UNLOAD_RADIUS, VIEW_RADIUS, sampleWorld, styleForKind, type Biome, type LandKind, type Terrain, type WorldSample } from "./world";
 import { Hud } from "./ui";
 import { developmentStage, isUnlocked, specialtyFor, type DevelopmentStage } from "./civilization";
 import { goalCopy, type SimulationConfig } from "./config";
 import { createCosmicSystem, type CosmicSystem } from "./cosmos";
-import { DIRECTIVE_COPY, directivesFromText, type Directive } from "./directive";
+import { DIRECTIVE_COPY, directivesFromText, speedFromText, yearsFromText, type Directive } from "./directive";
 import { SimulationClient } from "./simulation/client.ts";
+import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInputs } from "./simulation/types.ts";
+import type { EvolutionEra } from "./simulation/evolution.ts";
+import { exchangeRegions, type NetworkRegion } from "./simulation/network.ts";
+import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
+import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
+import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
+import { HouseholdSystem, type HouseholdMetrics } from "./simulation/households.ts";
+import { settleShipment } from "./simulation/market.ts";
+import { resolveConflict } from "./simulation/conflict.ts";
+import { advanceDiplomaticChannel, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
+import { TerrainChunks } from "./terrain-chunks";
+import { WorldState } from "./world-state";
+import type { TerritorialClaim } from "./world-state";
+import { createSpacecraftSystem, type SpacecraftSystem } from "./spacecraft";
+import { createSubatomicSystem, type SubatomicSystem } from "./subatomic";
+import { originProfile, type OriginProfile } from "./origins";
 
 type Person = {
+  id: string;
   mesh: THREE.Group;
   q: number;
   r: number;
@@ -78,6 +92,7 @@ type Person = {
   tribe: boolean;
   islandId: string;
   seed: number;
+  age: number;
 };
 
 type Society = {
@@ -90,6 +105,13 @@ type Society = {
   mood: number;
   stage: DevelopmentStage;
   relation: number;
+  knowledge: number;
+  populationCapacity: number;
+  migrationPressure: number;
+  era: EvolutionEra;
+  culture: CulturalState;
+  culturalInfluence: Partial<CultureTraits>;
+  diplomacy: DiplomaticChannel;
 };
 
 type Critter = {
@@ -112,6 +134,17 @@ type TradeRoute = {
   direction: 1 | -1;
   delivered: boolean;
 };
+
+type CommunicationLink = {
+  source: THREE.Vector3;
+  destination: THREE.Vector3;
+  line: THREE.Line;
+  pulse: THREE.Mesh;
+};
+
+type District = "homes" | "fields" | "works" | "civic" | "harbor";
+type ObserverLens = "settlement" | "fields" | "citizen" | "society" | "network";
+type ObservatoryView = "world" | "universe" | "subatomic";
 
 type WorldEvent = "none" | "festival" | "drought" | "ash" | "trade" | "migration" | "flood" | "wildfire";
 type CivilizationGoal = SimulationConfig["goal"] | "knowledge" | "network";
@@ -139,6 +172,18 @@ const JOB_FOR_ROLE: Partial<Record<PersonRole, BuildingId>> = {
   smith: "forge",
 };
 
+const DISTRICT_FOR_BUILDING: Record<BuildingId, District> = {
+  hut: "homes", farm: "fields", orchard: "fields", lumber: "works", mine: "works", forge: "works", shrine: "civic", market: "civic", fishery: "harbor",
+};
+const DISTRICT_OFFSETS: Record<District, readonly [number, number]> = {
+  homes: [0, 0], fields: [-4, 3], works: [4, -3], civic: [2, 2], harbor: [-2, -4],
+};
+const EVOLUTION_RANK: Record<EvolutionEra, number> = { Camp: 0, Agrarian: 1, Maritime: 2, Civic: 3, Industrial: 4, Adaptive: 5, Orbital: 5 };
+const BUILDING_ERA: Record<BuildingId, EvolutionEra> = {
+  hut: "Camp", farm: "Camp", lumber: "Camp", fishery: "Camp", orchard: "Agrarian", shrine: "Agrarian", market: "Agrarian", mine: "Maritime", forge: "Civic",
+};
+const BUILDING_TECH: Record<BuildingId, number> = { hut: 1, farm: 1, fishery: 1, lumber: 1, orchard: 2, market: 2, shrine: 2, mine: 3, forge: 4 };
+
 const WEATHER_COPY: Record<Weather, string> = {
   clear: "Skies clear. Good traveling weather.",
   rain: "Rain on the fields. Crops drink deep.",
@@ -147,6 +192,7 @@ const WEATHER_COPY: Record<Weather, string> = {
 
 const HEX_SIZE = 1;
 const VIEW_OFFSETS = hexesInRadius(VIEW_RADIUS);
+const SPACECRAFT_DECK = hexesInRadius(10);
 
 type Tile = {
   q: number;
@@ -165,6 +211,9 @@ type Tile = {
   coast: boolean;
   wooded: boolean;
   owner: "player" | "tribe" | null;
+  territory: TerritorialClaim;
+  claimant: string | null;
+  contestedWith: string | null;
   kind: LandKind;
   islandId: string;
   buildLeft: number;
@@ -185,15 +234,20 @@ export class Game {
   private readonly pointer = new THREE.Vector2();
   private readonly tiles = new Map<string, Tile>();
   private readonly tileGroup = new THREE.Group();
+  private readonly worldState: WorldState;
+  private readonly terrainChunks: TerrainChunks;
   private readonly roadGroup = new THREE.Group();
   private readonly roadEdges = new Map<string, THREE.Group>();
   private readonly tradeGroup = new THREE.Group();
   private readonly tradeRoutes = new Map<string, TradeRoute>();
+  private readonly communicationGroup = new THREE.Group();
+  private readonly communicationLinks = new Map<string, CommunicationLink>();
   private readonly activityLog: string[] = [];
-  private readonly hoverRing: THREE.Line;
   private readonly water: WaterSystem;
   private readonly clouds: THREE.Group;
   private readonly cosmos: CosmicSystem;
+  private readonly spacecraft: SpacecraftSystem | null;
+  private readonly subatomic: SubatomicSystem;
   private readonly popIns: { object: THREE.Object3D; t: number; target: number }[] = [];
   private readonly swaying: THREE.Object3D[] = [];
   private readonly smokeStacks: THREE.Object3D[] = [];
@@ -201,8 +255,10 @@ export class Game {
   private readonly nightLights: THREE.Mesh[] = [];
   private readonly peopleGroup = new THREE.Group();
   private readonly people: Person[] = [];
+  private readonly households = new HouseholdSystem();
+  private householdMetrics: HouseholdMetrics | null = null;
+  private personSerial = 0;
   private readonly hexGeo = makeHexColumn();
-  private readonly keys = new Set<string>();
   private readonly hud = new Hud();
   private readonly discovered = new Set<LandKind>(["home"]);
   private readonly playerIslands = new Set<string>(["0,0"]);
@@ -214,19 +270,23 @@ export class Game {
   private readonly moonDisc: THREE.Mesh;
   private readonly skyDome: THREE.Mesh;
   private readonly stars: THREE.Points;
-  private ghost: THREE.Object3D;
-  private selected: BuildingId = "hut";
-  private hovered: Tile | null = null;
   private simDays = 0.4;
+  /** Observer time deliberately advances at a fixed visual pace. */
+  private visualDays = 0.4;
+  private weatherDays = 0.4;
   private speed = 1;
   private season: Season = "Spring";
+  private visualSeason: Season = "Spring";
   private gold = 72;
   private food = 22;
   private wood = 16;
   private mood = 52;
   private technology = 0;
+  private hullIntegrity = 97;
+  private culturalInfluence: Partial<CultureTraits> = {};
   private weather: Weather = "clear";
   private weatherUntil = 1.1;
+  private readonly weatherPace: number;
   private event: WorldEvent = "none";
   private eventUntil = 0;
   private goal: CivilizationGoal;
@@ -238,6 +298,12 @@ export class Game {
   private autoTimer = 0;
   private societyTimer = 0;
   private diplomacyTimer = 0;
+  private regionalNetworkTimer = 0;
+  private lifecycleTimer = 0;
+  private readonly fragmentationCooldown = new Map<string, number>();
+  private readonly fallenLineages = new Map<string, CulturalState>();
+  private readonly renewalUntil = new Map<string, number>();
+  private societyLensIndex = 0;
   private growTimer = 0;
   private hungerTimer = 0;
   private seeded = false;
@@ -246,27 +312,59 @@ export class Game {
   private readonly animals: Critter[] = [];
   private readonly life = new LivingWorld();
   private running = true;
-  private pointerDown: { x: number; y: number } | null = null;
   private hudTimer = 0;
   private renderScale = 1.5;
   private qualityTimer = 0;
   private qualityFrames = 0;
   private cosmicMode = false;
+  private observatoryView: ObservatoryView = "world";
   private readonly visualStyle: SimulationConfig["visualStyle"];
+  private readonly origin: SimulationConfig["origin"];
+  private readonly originProfile: OriginProfile;
+  private readonly spacecraftMode: boolean;
   private readonly simulation: SimulationClient;
+  private readonly manifest: WorldManifest;
+  private readonly chronicle: EventChronicle;
+  private readonly directiveHistory: string[] = [];
+  private lastSimulationInputs: SimulationInputs | null = null;
+  private lastOriginCrisis: string | null = null;
+  private pointerDown: { x: number; y: number } | null = null;
+  private readonly navigationKeys = new Set<string>();
+  private observerMove: {
+    fromTarget: THREE.Vector3;
+    toTarget: THREE.Vector3;
+    fromPosition: THREE.Vector3;
+    toPosition: THREE.Vector3;
+    progress: number;
+    observatoryView?: ObservatoryView;
+  } | null = null;
 
   constructor(canvas: HTMLCanvasElement, config: SimulationConfig) {
     this.canvas = canvas;
     this.visualStyle = config.visualStyle;
-    const startingStores = config.resources === "lean" ? { gold: 36, food: 12, wood: 8 } : config.resources === "abundant" ? { gold: 120, food: 40, wood: 32 } : { gold: 72, food: 22, wood: 16 };
+    this.origin = config.origin;
+    this.originProfile = originProfile(config.origin);
+    this.manifest = createWorldManifest(config);
+    this.chronicle = new EventChronicle();
+    this.spacecraftMode = config.origin === "spacecraft";
+    this.worldState = new WorldState(config.seed, config.archetype);
+    this.weatherPace = config.temperament === "calm" ? 1.65 : config.temperament === "wild" ? 0.72 : 1;
+    this.terrainChunks = new TerrainChunks(this.worldState, 31, 148, this.visualStyle);
+    const baseStores = config.resources === "lean" ? { gold: 36, food: 12, wood: 8 } : config.resources === "abundant" ? { gold: 120, food: 40, wood: 32 } : { gold: 72, food: 22, wood: 16 };
+    const startingStores = {
+      gold: baseStores.gold + this.originProfile.storeBonus.gold,
+      food: baseStores.food + this.originProfile.storeBonus.food,
+      wood: baseStores.wood + this.originProfile.storeBonus.wood,
+    };
     this.gold = startingStores.gold;
     this.food = startingStores.food;
     this.wood = startingStores.wood;
+    this.mood = this.originProfile.startingMood;
     this.goal = config.goal;
     this.speed = config.speed;
-    this.technology = config.technology === "advanced" ? 90 : config.technology === "developing" ? 30 : 0;
+    this.technology = Math.max(config.technology === "advanced" ? 90 : config.technology === "developing" ? 30 : 0, this.originProfile.knowledgeFloor);
     this.simulation = new SimulationClient(config.seed, startingStores, this.technology);
-    this.weatherUntil = config.temperament === "calm" ? 1.8 : config.temperament === "wild" ? 0.55 : 1.1;
+    this.weatherUntil = this.weatherDays + 0.75 * this.weatherPace;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.renderScale));
     this.renderer.shadowMap.enabled = true;
@@ -340,17 +438,26 @@ export class Game {
     this.scene.add(this.clouds);
     this.cosmos = createCosmicSystem();
     this.scene.add(this.cosmos.group);
+    this.subatomic = createSubatomicSystem(config.seed);
+    this.scene.add(this.subatomic.group);
+    this.spacecraft = this.spacecraftMode ? createSpacecraftSystem() : null;
+    if (this.spacecraft) this.scene.add(this.spacecraft.group);
     this.scene.add(this.roadGroup);
+    this.scene.add(this.terrainChunks.group);
     this.scene.add(this.tileGroup);
     this.scene.add(this.tradeGroup);
+    this.scene.add(this.communicationGroup);
     this.scene.add(this.peopleGroup);
     this.scene.add(this.life.group);
+    if (this.spacecraftMode) {
+      this.camera.position.set(23, 28, 30);
+      this.controls.target.set(0, 0, 0);
+      this.terrainChunks.group.visible = false;
+      this.water.mesh.visible = false;
+      this.clouds.visible = false;
+      this.life.group.visible = false;
+    }
     this.ensureWorld();
-
-    this.hoverRing = createHexRing(0.82);
-    this.scene.add(this.hoverRing);
-    this.ghost = this.makeGhost("hut");
-    this.scene.add(this.ghost);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -359,20 +466,24 @@ export class Game {
     this.composer.addPass(new OutputPass());
 
     this.bindUi();
-    this.bindInput();
+    this.bindObserverNavigation();
     this.resize();
     window.addEventListener("resize", () => this.resize());
     applySeasonPalette(this.season);
     this.updateLighting();
     this.seedCivilization();
-    this.syncSpeedButtons();
+    this.captureChronicleCheckpoint();
     this.refreshHud();
     (window as unknown as { game: Game }).game = this;
-    this.setHint(`${goalCopy(config.goal)} Scroll out — a glass city sits east, a brick harbor west.`);
+    this.setHint(`${goalCopy(config.goal)} Write “speed 2×” or “pause time” to set the observer pace.`);
     this.loop();
   }
 
   private ensureWorld(): void {
+    if (this.spacecraftMode) {
+      this.ensureSpacecraftDeck();
+      return;
+    }
     const focus = worldToHex(this.controls.target.x, this.controls.target.z, HEX_SIZE);
     const focusKey = `${Math.round(focus.q / 3)},${Math.round(focus.r / 3)}`;
     const first = this.tiles.size === 0;
@@ -383,7 +494,7 @@ export class Game {
       const q = focus.q + offset.q;
       const r = focus.r + offset.r;
       if (this.tiles.has(hexKey(q, r))) continue;
-      const sample = sampleWorld(q, r);
+      const sample = this.worldState.sample(q, r);
       if (!sample) continue;
       this.stampTile(q, r, sample);
       if (!this.discovered.has(sample.kind)) {
@@ -391,8 +502,29 @@ export class Game {
         this.setHint(DISCOVER_COPY[sample.kind]);
       }
     }
+    this.terrainChunks.update(focus.q, focus.r);
     this.pruneWorld(focus.q, focus.r);
     if (this.seeded) this.tryFoundSocieties();
+  }
+
+  /** The orbital scenario uses a finite, sealed hex deck rather than a procedural planet. */
+  private ensureSpacecraftDeck(): void {
+    if (this.tiles.size > 0) return;
+    for (const offset of SPACECRAFT_DECK) {
+      const distance = hexDistance(offset.q, offset.r);
+      const sample: WorldSample = {
+        land: true,
+        kind: "metro",
+        biome: distance < 3 ? "urban" : "plaza",
+        height: 0.42,
+        terrain: "plain",
+        coast: false,
+        buildable: distance < 9,
+        landmark: "none",
+        islandId: "0,0",
+      };
+      this.stampTile(offset.q, offset.r, sample);
+    }
   }
 
   private pruneWorld(fq: number, fr: number): void {
@@ -419,6 +551,11 @@ export class Game {
     const baseY = scaleY * 0.5 - 0.14;
     const tint = new THREE.Color();
     const cliff = makeCliffMaterial();
+
+    if (this.spacecraftMode) {
+      tint.setHSL(sample.biome === "urban" ? 0.58 : 0.56, 0.13, sample.biome === "urban" ? 0.24 + n * 0.04 : 0.37 + n * 0.04);
+      cliff.color.setHex(0x1b2632);
+    } else
 
     if (sample.biome === "sand") {
       tint.setHSL(0.09, 0.46, 0.5 + n * 0.05);
@@ -462,6 +599,9 @@ export class Game {
       tint.setHSL(0.23 + n * 0.04, 0.58, 0.34 + n * 0.08);
       cliff.color.setHex(0xc49a6a);
     }
+    this.applyVisualStyle(tint, cliff.color);
+    this.applyOriginLandscapeStyle(tint, cliff.color);
+    const stored = this.worldState.tile(q, r);
 
     const top =
       sample.landmark === "vent"
@@ -471,7 +611,8 @@ export class Game {
           : sample.biome === "sand" || sample.biome === "desert"
             ? makeSandMaterial(tint)
             : makeGrassMaterial(tint);
-    const bottom = new THREE.MeshStandardMaterial({ color: 0x3d2a1c, roughness: 1, flatShading: true });
+    this.applyTerritoryColor(top.color, stored.owner, stored.territory);
+    const bottom = new THREE.MeshStandardMaterial({ color: this.spacecraftMode ? 0x101923 : 0x3d2a1c, roughness: this.spacecraftMode ? 0.52 : 1, metalness: this.spacecraftMode ? 0.45 : 0, flatShading: true });
     const mesh = new THREE.Mesh(this.hexGeo, [cliff, top, bottom]);
     mesh.position.set(x, baseY, z);
     mesh.scale.y = scaleY;
@@ -534,13 +675,89 @@ export class Game {
       buildable: sample.buildable,
       coast: sample.coast,
       wooded,
-      owner: null,
+      owner: stored.owner,
+      territory: stored.territory,
+      claimant: stored.claimant,
+      contestedWith: stored.contestedWith,
       kind: sample.kind,
       islandId: sample.islandId,
       buildLeft: 0,
       buildTotal: 0,
       ready: false,
     });
+    if (stored.building) this.restoreBuilding(this.tiles.get(hexKey(q, r)) as Tile, stored);
+  }
+
+  private applyVisualStyle(top: THREE.Color, cliff: THREE.Color): void {
+    if (this.visualStyle === "austere") {
+      top.lerp(new THREE.Color(0x60747a), 0.32).offsetHSL(0, -0.18, -0.05);
+      cliff.lerp(new THREE.Color(0x454c50), 0.32).offsetHSL(0, -0.14, -0.04);
+    } else if (this.visualStyle === "radiant") {
+      top.offsetHSL(0.015, 0.16, 0.09);
+      cliff.offsetHSL(-0.01, 0.12, 0.045);
+    }
+  }
+
+  /** A scenario's material inheritance is readable before any HUD value is. */
+  private applyOriginLandscapeStyle(top: THREE.Color, cliff: THREE.Color): void {
+    if (this.spacecraftMode) return;
+    if (this.origin === "camp") {
+      top.lerp(new THREE.Color(0x8a7547), 0.12);
+      cliff.lerp(new THREE.Color(0x66503b), 0.14);
+    } else if (this.origin === "farmers") {
+      top.lerp(new THREE.Color(0x6e9a48), 0.16).offsetHSL(0.01, 0.04, 0.015);
+      cliff.lerp(new THREE.Color(0x8b7040), 0.1);
+    } else if (this.origin === "city") {
+      top.lerp(new THREE.Color(0x71818b), 0.23).offsetHSL(-0.015, -0.08, -0.02);
+      cliff.lerp(new THREE.Color(0x625d58), 0.22);
+    }
+  }
+
+  private applyTerritoryColor(color: THREE.Color, owner: Tile["owner"], territory: TerritorialClaim = "none"): void {
+    if (territory === "contested") {
+      color.lerp(new THREE.Color(0xe2ad45), 0.46);
+      return;
+    }
+    if (territory === "memory") {
+      color.lerp(new THREE.Color(0x876ca0), 0.3);
+      return;
+    }
+    if (owner === "player") color.lerp(new THREE.Color(0x4aa9d6), territory === "sovereignty" ? 0.3 : 0.18);
+    if (owner === "tribe") color.lerp(new THREE.Color(0xc86d5a), territory === "sovereignty" ? 0.3 : 0.18);
+  }
+
+  private claimantFor(tile: Tile): string | null {
+    if (tile.owner === "player") return "player";
+    return tile.owner === "tribe" ? tile.islandId : null;
+  }
+
+  private paintTerritory(tile: Tile): void {
+    const color = tile.baseTop.clone();
+    this.applyTerritoryColor(color, tile.owner, tile.territory);
+    tile.topMat.color.copy(color);
+  }
+
+  private restoreBuilding(tile: Tile, stored: import("./world-state").StoredTile): void {
+    if (!stored.building || !stored.owner) return;
+    tile.building = stored.building;
+    tile.owner = stored.owner;
+    tile.buildLeft = stored.buildLeft;
+    tile.buildTotal = stored.buildTotal;
+    tile.ready = stored.ready;
+    if (tile.decor) {
+      tile.mesh.remove(tile.decor);
+      tile.decor = null;
+    }
+    tile.buildingMesh = makeBuilding(stored.building, this.architectureFor(tile));
+    tile.buildingMesh.position.y = 0.5;
+    const built = stored.ready || stored.buildTotal <= 0 ? 1 : Math.max(0.28, 1 - stored.buildLeft / stored.buildTotal);
+    tile.buildingMesh.scale.setScalar(built);
+    tile.mesh.add(tile.buildingMesh);
+    this.registerAnimatedObjects(tile.buildingMesh);
+    if (tile.ready) {
+      this.markRoads(tile);
+      this.attachPort(tile);
+    }
   }
 
   private makeMountainDecor(snowCapped: boolean): THREE.Group {
@@ -569,104 +786,277 @@ export class Game {
   }
 
   private bindUi(): void {
-    document.querySelectorAll("[data-speed]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const value = Number((button as HTMLButtonElement).dataset.speed);
-        this.setSpeed(value);
-      });
-    });
     document.querySelector<HTMLFormElement>("#directive-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const input = document.querySelector<HTMLInputElement>("#directive-input");
-      const directives = directivesFromText(input?.value ?? "");
+      const text = input?.value ?? "";
+      const years = yearsFromText(text);
+      if (years !== null) this.advanceDeepTime(years);
+      const pace = speedFromText(text);
+      if (pace !== null) this.setObserverSpeed(pace);
+      const directives = directivesFromText(text);
       const directive = directives[0];
-      if (!directive) return this.setHint("Try asking for food, growth, trade, culture, frontier, or a balanced course.");
-      this.directiveQueue = directives.slice(1);
-      this.setDirective(directive, input?.value);
+      if (directive) {
+        this.directiveQueue = directives.slice(1);
+        this.setDirective(directive, text);
+      } else if (pace === null) {
+        this.setHint("Try asking for food, growth, trade, culture, frontier, balance, or a time pace.");
+      }
       if (input) input.value = "";
     });
     document.querySelectorAll<HTMLButtonElement>("[data-zoom]").forEach((button) => {
       button.addEventListener("click", () => this.setZoom(Number(button.dataset.zoom)));
     });
-    this.syncSpeedButtons();
+    document.querySelectorAll<HTMLButtonElement>("[data-observatory-view]").forEach((button) => {
+      button.addEventListener("click", () => this.setObservatoryView(button.dataset.observatoryView as ObservatoryView));
+    });
+    document.querySelector<HTMLButtonElement>("#advance-century")?.addEventListener("click", () => this.advanceCenturyStep());
+    const speedSelector = document.querySelector<HTMLSelectElement>("#speed-selector");
+    if (speedSelector) {
+      speedSelector.value = String(this.speed);
+      speedSelector.addEventListener("change", () => this.setObserverSpeed(Number(speedSelector.value)));
+    }
+    document.querySelector<HTMLSelectElement>("#lens-selector")?.addEventListener("change", (event) => {
+      this.setObserverLens((event.target as HTMLSelectElement).value as ObserverLens);
+    });
+    document.querySelector<HTMLButtonElement>("#export-manifest")?.addEventListener("click", () => this.downloadManifest());
   }
 
-  private bindInput(): void {
-    this.canvas.addEventListener("pointermove", (event) => {
-      this.updatePointer(event);
-      this.updateHover();
+  private downloadManifest(): void {
+    const manifest = createWorldManifest(this.manifest.config, this.directiveHistory);
+    const payload = serializeExperiment({
+      manifest,
+      definition: {
+        stores: { food: this.food, wood: this.wood, gold: this.gold },
+        knowledge: this.technology,
+        inputs: this.lastSimulationInputs ?? {
+          population: this.citizens().length,
+          housing: this.housingOf("player"),
+          annualProduction: { food: 0, wood: 0, gold: 0 },
+          buildings: emptyCounts(),
+          moodPressure: 0,
+          infrastructure: { roads: 0, ports: 0, tradeRoutes: 0 },
+          disruption: "none",
+        },
+        years: 0,
+        checkpointEvery: 1,
+      },
+      events: this.chronicle.getEvents(),
+      checkpoints: this.chronicle.getCheckpoints().length > 0
+        ? this.chronicle.getCheckpoints()
+        : [{ year: yearFromDays(this.simDays), snapshot: structuredClone(this.simulation.snapshot) }],
     });
+    const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${manifest.id}-checkpoint.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    this.setHint("Saved a reproducible world manifest and current simulation checkpoint.");
+  }
+
+  /** Pointer navigation changes only the observer's point of view. It never
+   * selects, moves, or constructs anything in the simulated world. */
+  private bindObserverNavigation(): void {
     this.canvas.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       this.pointerDown = { x: event.clientX, y: event.clientY };
     });
     this.canvas.addEventListener("pointerup", (event) => {
-      if (event.button !== 0 || !this.pointerDown) return;
-      const dx = event.clientX - this.pointerDown.x;
-      const dy = event.clientY - this.pointerDown.y;
+      const down = this.pointerDown;
       this.pointerDown = null;
-      if (dx * dx + dy * dy > 16) return;
-      this.updatePointer(event);
-      this.tryPlace();
+      if (event.button !== 0 || !down) return;
+      if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > 7) return;
+      this.focusClickedTile(event.clientX, event.clientY);
     });
+    this.canvas.addEventListener("pointerleave", () => { this.pointerDown = null; });
     window.addEventListener("keydown", (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
-      if (["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
-        event.preventDefault();
-        const mapped = event.key
-          .toLowerCase()
-          .replace("arrowup", "w")
-          .replace("arrowdown", "s")
-          .replace("arrowleft", "a")
-          .replace("arrowright", "d");
-        this.keys.add(mapped);
-      }
-      if (event.key === " " || event.key === "p" || event.key === "P") {
-        event.preventDefault();
-        this.setSpeed(this.speed === 0 ? 1 : 0);
-      }
-      if (event.key === "+" || event.key === "=") this.nudgeSpeed(1);
-      if (event.key === "-" || event.key === "_") this.nudgeSpeed(-1);
-      if (event.key === "z" || event.key === "Z") this.setZoom(70);
-      if (event.key === "x" || event.key === "X") this.setZoom(430);
-      if (event.key === "c" || event.key === "C") this.setZoom(1700);
-      if (event.key === "h" || event.key === "H") this.setInterfaceVisible(document.body.classList.contains("cinematic"));
+      if (!event.key.startsWith("Arrow") || this.isTyping()) return;
+      this.navigationKeys.add(event.key);
+      this.observerMove = null;
+      event.preventDefault();
     });
     window.addEventListener("keyup", (event) => {
-      this.keys.delete(event.key.toLowerCase());
-      this.keys.delete(event.key.toLowerCase().replace("arrowup", "w").replace("arrowdown", "s").replace("arrowleft", "a").replace("arrowright", "d"));
+      if (!event.key.startsWith("Arrow")) return;
+      this.navigationKeys.delete(event.key);
+      event.preventDefault();
     });
   }
 
-  private makeGhost(id: BuildingId): THREE.Object3D {
-    const ghost = makeBuilding(id);
-    ghostify(ghost, BUILDINGS[id].color);
-    ghost.visible = false;
-    ghost.scale.setScalar(1.02);
-    return ghost;
+  private isTyping(): boolean {
+    const active = document.activeElement;
+    return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement;
   }
 
-  private updatePointer(event: PointerEvent): void {
+  private focusClickedTile(clientX: number, clientY: number): void {
     const rect = this.canvas.getBoundingClientRect();
-    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  }
-
-  private hitTile(): Tile | null {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObjects(this.tileGroup.children, true);
-    for (const hit of hits) {
+    if (this.observatoryView === "universe") {
+      this.focusClickedPlanet();
+      return;
+    }
+    if (this.cosmicMode || !this.tileGroup.visible) return;
+    const hit = this.raycaster.intersectObjects(this.tileGroup.children, true)[0];
+    if (hit) {
       let object: THREE.Object3D | null = hit.object;
-      while (object) {
-        const data = object.userData as { q?: number; r?: number };
-        if (data.q !== undefined && data.r !== undefined) {
-          return this.tiles.get(hexKey(data.q, data.r)) ?? null;
-        }
-        object = object.parent;
+      while (object && (typeof object.userData.q !== "number" || typeof object.userData.r !== "number")) object = object.parent;
+      const tile = object ? this.tiles.get(hexKey(object.userData.q as number, object.userData.r as number)) : undefined;
+      if (tile) {
+        this.travelObserverTo(this.tileTop(tile));
+        const society = tile.owner === "tribe" ? this.societies.get(tile.islandId) : null;
+        const place = society?.name ?? (tile.owner === "player" ? "the home settlement" : DISCOVER_COPY[tile.kind]);
+        this.setHint(`Observer traveling to ${place}.`);
+        return;
       }
     }
-    return null;
+    // Empty water and deck space are navigable too, so a click always means
+    // “move the observer here” rather than only “select a rendered tile.”
+    const target = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), target)) return;
+    this.travelObserverTo(target);
+    this.setHint("Observer traveling to the selected viewpoint.");
+  }
+
+  /** Universe clicks are visits: bodies can be inspected closely without
+   * pretending that their separate societies are part of this world's model. */
+  private focusClickedPlanet(): void {
+    const hits = this.raycaster.intersectObjects(this.cosmos.group.children, true);
+    let body: THREE.Object3D | null = null;
+    for (const hit of hits) {
+      let candidate: THREE.Object3D | null = hit.object;
+      while (candidate && typeof candidate.userData.planetName !== "string") candidate = candidate.parent;
+      if (candidate) {
+        body = candidate;
+        break;
+      }
+    }
+    if (!body) {
+      this.setHint("Choose a labeled planet to visit, or use World to return to Tidelight.");
+      return;
+    }
+    const center = body.getWorldPosition(new THREE.Vector3());
+    const radius = Number(body.userData.radius ?? 28);
+    const direction = new THREE.Vector3().subVectors(this.camera.position, center);
+    if (direction.lengthSq() < 0.001) direction.set(1.5, 0.8, 2.4);
+    direction.normalize();
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).addScaledVector(direction, radius * 3.5);
+    this.controls.update();
+    const name = String(body.userData.planetName);
+    const copy = String(body.userData.planetCopy ?? "An uncharted neighboring world.");
+    const readout = document.querySelector("#planet-readout");
+    if (readout) readout.textContent = `Visiting ${name} · ${copy}`;
+    this.setHint(`Visiting ${name}. ${copy} Its civilization is not yet simulated, but its world can be observed here.`);
+  }
+
+  private travelObserverTo(target: THREE.Vector3): void {
+    const offset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+    const distance = THREE.MathUtils.clamp(offset.length(), 18, this.spacecraftMode ? 64 : 180);
+    if (offset.lengthSq() < 0.001) offset.set(0.45, 0.7, 0.55);
+    offset.normalize();
+    this.observerMove = {
+      fromTarget: this.controls.target.clone(),
+      toTarget: target.clone(),
+      fromPosition: this.camera.position.clone(),
+      toPosition: target.clone().addScaledVector(offset, distance),
+      progress: 0,
+    };
+  }
+
+  private advanceObserverMove(dt: number): void {
+    const move = this.observerMove;
+    if (!move) return;
+    move.progress = Math.min(1, move.progress + dt / 0.62);
+    const eased = move.progress * move.progress * (3 - 2 * move.progress);
+    this.controls.target.lerpVectors(move.fromTarget, move.toTarget, eased);
+    this.camera.position.lerpVectors(move.fromPosition, move.toPosition, eased);
+    if (move.progress >= 1) {
+      this.observerMove = null;
+      if (move.observatoryView) {
+        this.observatoryView = move.observatoryView;
+        this.refreshViewReadout();
+      }
+    }
+  }
+
+  private moveObserverWithArrows(dt: number): void {
+    if (this.navigationKeys.size === 0) return;
+    const forward = new THREE.Vector3().subVectors(this.controls.target, this.camera.position);
+    forward.y = 0;
+    if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const direction = new THREE.Vector3();
+    if (this.navigationKeys.has("ArrowUp")) direction.add(forward);
+    if (this.navigationKeys.has("ArrowDown")) direction.sub(forward);
+    if (this.navigationKeys.has("ArrowRight")) direction.add(right);
+    if (this.navigationKeys.has("ArrowLeft")) direction.sub(right);
+    if (direction.lengthSq() === 0) return;
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    direction.normalize().multiplyScalar(dt * THREE.MathUtils.clamp(distance * 0.28, 18, 120));
+    this.controls.target.add(direction);
+    this.camera.position.add(direction);
+  }
+
+  private setObserverSpeed(value: number): void {
+    if (![0, 1, 2, 4, 8, 96].includes(value)) return;
+    this.speed = value;
+    const selector = document.querySelector<HTMLSelectElement>("#speed-selector");
+    if (selector) selector.value = String(value);
+    this.setHint(value === 0 ? "The observer paused time." : value === 96 ? "The observer selected years pace." : `The observer set time to ${value}×.`);
+  }
+
+  private setObserverLens(lens: ObserverLens): void {
+    const playerTiles = [...this.tiles.values()].filter((tile) => tile.owner === "player" && tile.ready);
+    const frame = (tile: Tile, distance: number, message: string) => {
+      this.frameObserver(this.tileTop(tile), distance);
+      this.setHint(message);
+    };
+    if (lens === "settlement") {
+      const home = playerTiles.find((tile) => tile.building === "hut") ?? playerTiles[0];
+      if (home) frame(home, 48, "Settlement lens. Watch the council's home district.");
+      return;
+    }
+    if (lens === "fields") {
+      const land = playerTiles.find((tile) => tile.building === "farm" || tile.building === "orchard" || tile.building === "fishery");
+      if (land) frame(land, 36, "Working-lands lens. Food and ecology shape the settlement here.");
+      return;
+    }
+    if (lens === "citizen") {
+      const citizen = this.citizens()[this.societyLensIndex % Math.max(1, this.citizens().length)];
+      this.societyLensIndex += 1;
+      if (citizen) {
+        const tile = this.tiles.get(hexKey(citizen.q, citizen.r));
+        if (tile) frame(tile, 16, "Citizen lens. This resident's daily movement makes local work visible.");
+      }
+      return;
+    }
+    if (lens === "society") {
+      const societies = [...this.societies.values()];
+      const society = societies[this.societyLensIndex % Math.max(1, societies.length)];
+      this.societyLensIndex += 1;
+      const center = society && [...this.tiles.values()].find((tile) => tile.islandId === society.islandId && tile.owner === "tribe" && tile.ready);
+      if (center && society) frame(center, 56, `${society.name} lens. Its needs and institutions evolve independently.`);
+      else this.setHint("No neighboring society is within the observed world yet.");
+      return;
+    }
+    const points = playerTiles.concat([...this.tiles.values()].filter((tile) => tile.owner === "tribe" && tile.ready));
+    if (points.length === 0) return;
+    const center = points.reduce((sum, tile) => sum.add(this.tileTop(tile)), new THREE.Vector3()).multiplyScalar(1 / points.length);
+    this.frameObserver(center, 420);
+    this.setHint("Regional-network lens. Goods, ideas, and migrants move between developing places.");
+  }
+
+  private frameObserver(target: THREE.Vector3, distance: number): void {
+    this.observerMove = null;
+    const direction = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+    if (direction.lengthSq() < 0.001) direction.set(0.45, 0.7, 0.55);
+    direction.normalize();
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).addScaledVector(direction, distance);
+    this.controls.update();
   }
 
   private tileTop(tile: Tile): THREE.Vector3 {
@@ -677,26 +1067,27 @@ export class Game {
     );
   }
 
-  private updateHover(): void {
-    const tile = this.hitTile();
-    this.hovered = tile;
-    this.ghost.visible = false;
-    this.hoverRing.visible = Boolean(tile);
-    if (tile) {
-      const top = this.tileTop(tile);
-      this.hoverRing.position.copy(top);
-      const ringMat = this.hoverRing.material as THREE.LineBasicMaterial;
-      ringMat.color.setHex(tile.building ? 0xc8ffe4 : 0xa4c3d8);
-    }
-    this.canvas.style.cursor = "grab";
-  }
-
-  private tryPlace(): void {
-    if (this.cosmicMode) {
-      this.selectPlanet();
+  private advanceDeepTime(years: number): void {
+    if (!this.lastSimulationInputs) {
+      this.setHint("The first season is still being observed. Try the deep-time request again in a moment.");
       return;
     }
-    this.setHint("The council assigns construction sites. Steer it with a natural-language instruction below.");
+    this.simDays += years * 12;
+    // Deep time changes the chronicle, not the observer's current sky.
+    this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
+    const projection = this.simulation.advanceYears(this.lastSimulationInputs, years);
+    if (projection) this.applySimulationSnapshot(projection);
+    this.captureChronicleCheckpoint();
+    this.setHint(`Deep-time projection: ${years.toLocaleString()} years pass. The observer is now in year ${yearFromDays(this.simDays)}.`);
+    this.refreshHud();
+  }
+
+  /** A reproducible, inspectable macro-history increment rather than a burst of
+   * continuous real-time speed. */
+  private advanceCenturyStep(): void {
+    this.setObserverSpeed(0);
+    this.advanceDeepTime(100);
+    this.setHint(`Century step complete. Year ${yearFromDays(this.simDays)} is now paused for observation.`);
   }
 
   private placeBuilding(
@@ -721,19 +1112,22 @@ export class Game {
 
     tile.building = def.id;
     tile.owner = opts.owner;
+    tile.claimant = this.claimantFor(tile);
+    tile.contestedWith = null;
+    tile.territory = id === "hut" ? "habitation" : "sovereignty";
     if (tile.decor) {
       tile.mesh.remove(tile.decor);
       tile.decor = null;
     }
-    tile.buildingMesh = makeBuilding(def.id, styleForKind(tile.kind));
+    tile.buildingMesh = makeBuilding(def.id, this.architectureFor(tile));
     tile.buildingMesh.position.y = 0.5;
     const instant = Boolean(opts.free);
     tile.buildTotal = instant ? 0 : 0.28 + (def.goldCost + def.woodCost) * 0.012;
     tile.buildLeft = tile.buildTotal;
     tile.buildingMesh.scale.setScalar(instant ? 0.01 : 0.28);
     tile.mesh.add(tile.buildingMesh);
+    this.persistTile(tile);
     this.registerAnimatedObjects(tile.buildingMesh);
-    this.ghost.visible = false;
     this.refreshHud();
     if (instant) {
       this.popIns.push({ object: tile.buildingMesh, t: 0, target: 1.22 });
@@ -752,8 +1146,10 @@ export class Game {
       this.popIns.push({ object: tile.buildingMesh, t: 0, target: 1.22 });
     }
     const def = BUILDINGS[tile.building];
+    this.claimTerritory(tile);
     this.markRoads(tile);
     this.attachPort(tile);
+    this.persistTile(tile);
     if (tile.building === "hut") {
       this.spawnOne(tile, "villager", 0, tile.owner === "tribe");
     }
@@ -766,6 +1162,38 @@ export class Game {
     } else {
       const society = this.societies.get(tile.islandId);
       if (society) this.setHint(`${society.name} finished a ${def.name.toLowerCase()}.`);
+    }
+  }
+
+  /**
+   * Settlements project claims rather than painting every region as permanently
+   * owned. Overlap produces a durable contested frontier; collapse preserves a
+   * subdued memory claim for later societies to inherit or erase.
+   */
+  private claimTerritory(center: Tile): void {
+    const claimant = this.claimantFor(center);
+    if (!center.owner || !claimant) return;
+    const traits = center.owner === "player"
+      ? this.simulation.snapshot.culture.traits
+      : this.societies.get(center.islandId)?.culture.traits;
+    const reach = 1 + Math.floor(((traits?.cooperation ?? 0.45) + (traits?.mobility ?? 0.45)) * 1.35);
+    for (const offset of hexesInRadius(Math.min(3, reach))) {
+      const tile = this.tiles.get(hexKey(center.q + offset.q, center.r + offset.r));
+      if (!tile || tile === center) continue;
+      const foreignClaim = tile.claimant && tile.claimant !== claimant && tile.territory !== "memory";
+      if (foreignClaim) {
+        tile.territory = "contested";
+        tile.contestedWith = claimant;
+      } else {
+        tile.claimant = claimant;
+        tile.contestedWith = null;
+        tile.territory = "economic";
+        // Administrative ownership remains local to a society's home region;
+        // claims can nevertheless meet across procedural regional boundaries.
+        if (tile.islandId === center.islandId && !tile.owner) tile.owner = center.owner;
+      }
+      this.paintTerritory(tile);
+      this.persistTile(tile);
     }
   }
 
@@ -846,6 +1274,7 @@ export class Game {
     const angle = seed * Math.PI * 2 + index * 2.15;
     const offset = new THREE.Vector3(Math.cos(angle) * 0.52, 0, Math.sin(angle) * 0.52);
     const person: Person = {
+      id: `resident-${this.personSerial++}`,
       mesh,
       q: tile.q,
       r: tile.r,
@@ -865,6 +1294,7 @@ export class Game {
       tribe,
       islandId: tile.islandId,
       seed,
+      age: 16 + Math.floor(seed * 40),
     };
     mesh.position.copy(this.personWorldPos(person, tile, tile, 1));
     mesh.scale.setScalar(0.01);
@@ -880,7 +1310,7 @@ export class Game {
   }
 
   private pickPersonDest(person: Person): void {
-    const hour = hourFromDays(this.simDays);
+    const hour = hourFromDays(this.visualDays);
     const night = isNight(hour);
     if (night && person.q === person.homeQ && person.r === person.homeR) {
       person.sleeping = true;
@@ -958,7 +1388,7 @@ export class Game {
         dt *
         person.speed *
         (this.weather === "storm" ? 0.55 : this.mood < 25 ? 0.8 : 1) *
-        (hourFromDays(this.simDays) >= 17.5 || isNight(hourFromDays(this.simDays)) ? 1.7 : 1);
+        (hourFromDays(this.visualDays) >= 17.5 || isNight(hourFromDays(this.visualDays)) ? 1.7 : 1);
       const t = Math.min(1, person.progress);
       const from = this.tiles.get(hexKey(person.q, person.r));
       const to = this.tiles.get(hexKey(person.destQ, person.destR));
@@ -1061,26 +1491,10 @@ export class Game {
     }
   }
 
-  private setSpeed(value: number): void {
-    this.speed = value;
-    this.syncSpeedButtons();
-    this.setHint(value === 0 ? "Time paused." : `Time flowing at ${value}×.`);
-  }
-
-  private nudgeSpeed(step: number): void {
-    const index = SPEED_STEPS.indexOf(this.speed as (typeof SPEED_STEPS)[number]);
-    const next = Math.max(0, Math.min(SPEED_STEPS.length - 1, (index < 0 ? 1 : index) + step));
-    this.setSpeed(SPEED_STEPS[next] ?? 1);
-  }
-
-  private syncSpeedButtons(): void {
-    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-speed]")) {
-      button.classList.toggle("active", Number(button.dataset.speed) === this.speed);
-    }
-  }
-
   private setDirective(directive: Directive, instruction?: string): void {
     this.directive = directive;
+    const record = instruction?.trim() || DIRECTIVE_COPY[directive];
+    if (this.directiveHistory.at(-1) !== record) this.directiveHistory.push(record);
     document.querySelectorAll<HTMLButtonElement>("[data-directive]").forEach((button) => {
       button.classList.toggle("active", button.dataset.directive === directive);
     });
@@ -1090,17 +1504,71 @@ export class Game {
   }
 
   private setZoom(distance: number): void {
+    const wasSpecialView = this.observatoryView !== "world";
+    this.observatoryView = "world";
+    this.refreshViewReadout();
+    if (wasSpecialView) {
+      this.controls.target.set(0, 1.2, 0);
+      this.camera.position.set(38, 58, 72);
+    }
     const direction = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
     if (direction.lengthSq() < 0.001) direction.set(0.4, 0.72, 0.55);
     direction.normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
     this.controls.update();
-    this.setHint(distance < 120 ? "Local view. Build your settlement tile by tile." : distance < 900 ? "World view. Survey continents and frontiers." : "Space view. Select a planet to learn about it.");
+    this.setHint(distance < 120 ? "Local view. Observe the council's work close up." : distance < 900 ? "World view. Survey the societies." : "Space view. Observe the worlds beyond Tidelight.");
   }
 
-  private setInterfaceVisible(visible: boolean): void {
-    document.body.classList.toggle("cinematic", !visible);
-    this.setHint(visible ? "Interface restored." : "Cinematic view. Press H to restore the interface.");
+  private setObservatoryView(view: ObservatoryView): void {
+    if (view === "world") {
+      this.observerMove = null;
+      this.observatoryView = view;
+      this.refreshViewReadout();
+      this.frameObserver(new THREE.Vector3(0, 0, 0), 430);
+      this.setPlanetReadout("Tidelight · the simulated home world");
+      this.setHint("World view. Regional terrain, settlements, and routes are visible together.");
+      return;
+    }
+    if (view === "universe") {
+      this.transitionToObservatoryView(view, new THREE.Vector3(-300, 0, -100), new THREE.Vector3(-145, 390, 1220));
+      this.setPlanetReadout("Select a planet to visit");
+      this.setHint("Universe view. Tidelight and its neighboring worlds are shown at a stable astronomical scale.");
+      return;
+    }
+    this.transitionToObservatoryView(view, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 42, 132));
+    this.setPlanetReadout("Subatomic observation lens");
+    this.setHint("Subatomic view. This is an observational lens: a stylized atom, energy cloud, and orbitals—not a separate game system.");
+  }
+
+  private transitionToObservatoryView(view: Exclude<ObservatoryView, "world">, target: THREE.Vector3, position: THREE.Vector3): void {
+    this.observerMove = {
+      fromTarget: this.controls.target.clone(),
+      toTarget: target,
+      fromPosition: this.camera.position.clone(),
+      toPosition: position,
+      progress: 0,
+      observatoryView: view,
+    };
+  }
+
+  private refreshViewReadout(): void {
+    const copy: Record<ObservatoryView, string> = {
+      world: "Settlement scale · 1 m",
+      universe: "Planetary scale · 10⁹ m schematic",
+      subatomic: "Subatomic scale · 10⁻¹⁰ m schematic",
+    };
+    const readout = document.querySelector("#view-scale");
+    if (readout) readout.textContent = copy[this.observatoryView];
+    document.querySelectorAll<HTMLButtonElement>("[data-observatory-view]").forEach((button) => {
+      const selected = button.dataset.observatoryView === this.observatoryView;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+  }
+
+  private setPlanetReadout(text: string): void {
+    const readout = document.querySelector("#planet-readout");
+    if (readout) readout.textContent = text;
   }
 
   private sendEnvoy(cooperate: boolean): void {
@@ -1113,17 +1581,19 @@ export class Game {
     if (!market) return this.setHint("A market is needed to send an envoy.");
     if (cooperate && !playerPort) return this.setHint("Build a coastal fishery or market before sending a trade envoy.");
     if (this.gold < 8) return this.setHint("An envoy needs 8 gold for supplies.");
-    this.gold -= 8;
-    society.relation = Math.max(-40, Math.min(60, society.relation + (cooperate ? 16 : -14)));
-    if (cooperate) {
-      society.gold += 5;
-      this.mood = Math.min(100, this.mood + 3);
-      this.createTradeRoute(society);
-      this.setHint(`A trade pact with ${society.name} opens a sea route between your ports.`);
-    } else {
-      society.gold += 9;
-      this.setHint(`You stake a rival claim against ${society.name}. Their builders will answer.`);
+    const kind: DiplomaticMessageKind = cooperate ? "trade-proposal" : "rival-claim";
+    if (society.diplomacy.messages.some((message) => message.kind === kind)) {
+      this.setHint(`An earlier ${cooperate ? "trade" : "border"} message is still traveling to ${society.name}.`);
+      return;
     }
+    this.gold -= 8;
+    const playerLanguage = this.simulation.snapshot.culture.language;
+    const affinity = playerLanguage.family === society.culture.language.family ? 0.95 : Math.max(0.12, 1 - Math.abs(playerLanguage.boundary - society.culture.language.boundary) * 0.7);
+    const [q, r] = society.islandId.split(",").map(Number);
+    society.diplomacy = dispatchMessage(society.diplomacy, kind, yearFromDays(this.simDays), {
+      distance: hexDistance(q, r), infrastructure: (playerPort ? 0.7 : 0.2) + (this.playerInfrastructure().roads > 1 ? 0.12 : 0), languageAffinity: affinity,
+    });
+    this.setHint(`${cooperate ? "A trade envoy" : "A rival claim"} departs for ${society.name}; its response will arrive after the journey.`);
   }
 
   private findPort(owner: "player" | "tribe", islandId?: string): Tile | null {
@@ -1174,7 +1644,7 @@ export class Game {
       const society = this.societies.get(route.societyId);
       const home = this.findPort("player");
       const destination = society && this.findPort("tribe", society.islandId);
-      if (!society || !home || !destination) {
+      if (!society || !channelSupportsTrade(society.diplomacy) || !home || !destination) {
         route.boat.visible = false;
         continue;
       }
@@ -1183,13 +1653,18 @@ export class Game {
       route.progress += route.direction * (simDt / SECONDS_PER_DAY) * 0.19 * weatherFactor;
       if (route.progress >= 1 || route.progress <= 0) {
         if (!route.delivered) {
+          const risk = this.weather === "storm" ? 0.62 : this.weather === "rain" ? 0.22 : 0.04;
+          const shipment = route.direction > 0
+            ? settleShipment({ stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, { stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length }, 1.35, risk)
+            : settleShipment({ stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length }, { stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, 1.35, risk);
           if (route.direction > 0) {
-            this.gold += 1.5;
-            society.food = Math.min(55, society.food + 0.45);
+            this.food = shipment.source.food; this.wood = shipment.source.wood; this.gold = shipment.source.gold;
+            society.food = shipment.destination.food; society.wood = shipment.destination.wood; society.gold = shipment.destination.gold;
           } else {
-            this.food += 0.8;
-            this.wood += 0.25;
+            society.food = shipment.source.food; society.wood = shipment.source.wood; society.gold = shipment.source.gold;
+            this.food = shipment.destination.food; this.wood = shipment.destination.wood; this.gold = shipment.destination.gold;
           }
+          if (shipment.shipment) this.setHint(`${society.name}'s boat delivers ${shipment.shipment.amount.toFixed(1)} ${shipment.shipment.good}; local scarcity sets the price.`);
           route.delivered = true;
         }
         route.progress = Math.max(0, Math.min(1, route.progress));
@@ -1230,16 +1705,35 @@ export class Game {
     };
   }
 
-  private techLevel(): number {
-    return 1 + Math.floor(Math.sqrt(this.technology / 20));
+  private techLevel(knowledge = this.technology): number {
+    return 1 + Math.floor(Math.sqrt(knowledge / 20));
   }
 
   private canUseBuilding(id: BuildingId, snap: CivSnapshot): boolean {
-    const required: Record<BuildingId, number> = { hut: 1, farm: 1, fishery: 1, lumber: 1, orchard: 2, market: 2, shrine: 2, mine: 3, forge: 4 };
-    return isUnlocked(id, snap.people, snap.buildingTotal) && this.techLevel() >= required[id];
+    return isUnlocked(id, snap.people, snap.buildingTotal) && this.techLevel() >= BUILDING_TECH[id] && this.eraAllows(this.simulation.snapshot.era, id, this.simulation.snapshot.culture);
+  }
+
+  private architectureFor(tile: Tile): import("./world").ArchStyle {
+    if (this.spacecraftMode) return "orbital";
+    // The same procedural terrain can host a materially different first
+    // society: city foundations use civic stone-and-metal forms from day one.
+    if (tile.owner === "player" && this.origin === "city") return "metro";
+    return styleForKind(tile.kind);
+  }
+
+  private eraAllows(era: EvolutionEra, id: BuildingId, culture?: CulturalState): boolean {
+    if (EVOLUTION_RANK[era] >= EVOLUTION_RANK[BUILDING_ERA[id]]) return true;
+    const practices = new Set(culture?.practices ?? []);
+    // Cultural discoveries can open a path that a linear "age" would miss.
+    if (id === "orchard" && practices.has("soil-rest covenant")) return true;
+    if ((id === "market" || id === "shrine") && practices.has("common granary")) return true;
+    if (id === "fishery" && practices.has("wayfinding compact")) return true;
+    if (id === "forge" && practices.has("open archive")) return true;
+    return false;
   }
 
   private terrainAllows(id: BuildingId, tile: Tile): boolean {
+    if (this.spacecraftMode) return true;
     if (id === "fishery") return tile.coast;
     if (id === "farm") return tile.terrain === "plain" || tile.terrain === "hill";
     if (id === "orchard" || id === "lumber" || id === "market") return tile.terrain !== "mountain";
@@ -1261,38 +1755,30 @@ export class Game {
 
   private territoryAllows(tile: Tile, owner: "player" | "tribe"): boolean {
     const nearby = [...this.tiles.values()].filter((entry) => entry.owner === owner && entry.islandId === tile.islandId && entry.building && entry.ready);
-    if (nearby.length === 0) return owner === "player" && tile.building === null && this.selected === "hut";
+    // A region needs one founding site before it can have a territorial core.
+    // Subsequent expansion remains constrained to its own evolving claim.
+    if (nearby.length === 0) return tile.building === null;
     const folk = owner === "player" ? this.citizens().length : this.people.filter((person) => person.tribe && person.islandId === tile.islandId).length;
     const morale = owner === "player" ? this.mood : this.societies.get(tile.islandId)?.mood ?? 40;
     const radius = Math.max(1.7, 1.8 + Math.min(4.5, nearby.length * 0.22 + folk * 0.08 + (morale - 45) * 0.025));
     return nearby.some((entry) => hexDistance(entry.q - tile.q, entry.r - tile.r) <= radius);
   }
 
-  private selectPlanet(): void {
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.raycaster.intersectObjects(this.cosmos.group.children, true)[0];
-    let object: THREE.Object3D | null = hit?.object ?? null;
-    while (object) {
-      const name = object.userData.planetName as string | undefined;
-      if (name) {
-        this.setHint(`${name}: ${String(object.userData.planetCopy)} Zoom in to return to Tidelight's living civilization.`);
-        return;
-      }
-      object = object.parent;
-    }
-    this.setHint("Select a planet to learn what kind of civilization it could host.");
-  }
-
   private findSite(id: BuildingId, islandId?: string): Tile | null {
     const def = BUILDINGS[id];
     const owner = islandId ? "tribe" : "player";
+    const district = DISTRICT_FOR_BUILDING[id];
+    const [islandQ, islandR] = (islandId ?? "0,0").split(",").map(Number);
+    const [offsetQ, offsetR] = DISTRICT_OFFSETS[district];
+    const anchorQ = islandQ + offsetQ;
+    const anchorR = islandR + offsetR;
     const ranked: { tile: Tile; score: number }[] = [];
     for (const tile of this.tiles.values()) {
       if (tile.building || !tile.buildable || !biomeAllows(def, tile.biome) || !this.terrainAllows(id, tile) || !this.territoryAllows(tile, owner)) continue;
       if (tile.owner && tile.owner !== owner) continue;
       if (islandId && tile.islandId !== islandId) continue;
       if (!islandId && !this.playerIslands.has(tile.islandId)) continue;
-      let score = 80 - hexDistance(tile.q, tile.r) * 1.4;
+      let score = 80 - hexDistance(tile.q - anchorQ, tile.r - anchorR) * 2.2;
       if (!islandId && tile.kind === "home") score += 40;
       let adjacent = 0;
       for (const hex of hexNeighbors(tile.q, tile.r)) {
@@ -1302,6 +1788,11 @@ export class Game {
         adjacent += 1;
       }
       score += adjacent * 8;
+      const localDistrict = [...this.tiles.values()].filter(
+        (entry) => entry.islandId === tile.islandId && entry.owner === owner && entry.building && DISTRICT_FOR_BUILDING[entry.building] === district,
+      );
+      const clusterDistance = localDistrict.reduce((best, entry) => Math.min(best, hexDistance(entry.q - tile.q, entry.r - tile.r)), Infinity);
+      if (Number.isFinite(clusterDistance)) score += Math.max(0, 14 - clusterDistance * 3.5);
       if (id === "fishery" && tile.coast) score += 10;
       if (id === "lumber" && tile.wooded) score += 8;
       ranked.push({ tile, score });
@@ -1313,18 +1804,14 @@ export class Game {
   private seedCivilization(): void {
     if (this.seeded) return;
     this.seeded = true;
-    const hut = this.findSite("hut");
-    if (hut) this.placeBuilding(hut, "hut", { owner: "player", free: true, silent: true });
-    const hut2 = this.findSite("hut");
-    if (hut2) this.placeBuilding(hut2, "hut", { owner: "player", free: true, silent: true });
-    const farm = this.findSite("farm");
-    if (farm) this.placeBuilding(farm, "farm", { owner: "player", free: true, silent: true });
-    const lumber = this.findSite("lumber");
-    if (lumber) this.placeBuilding(lumber, "lumber", { owner: "player", free: true, silent: true });
-    const fish = this.findSite("fishery");
-    if (fish) this.placeBuilding(fish, "fishery", { owner: "player", free: true, silent: true });
-    this.tryFoundSocieties();
-    this.seedAnimals();
+    for (const id of this.originProfile.foundations) {
+      const site = this.findSite(id);
+      if (site) this.placeBuilding(site, id, { owner: "player", free: true, silent: true });
+    }
+    if (!this.spacecraftMode) {
+      this.tryFoundSocieties();
+      this.seedAnimals();
+    }
   }
 
   private tryFoundSocieties(): void {
@@ -1338,14 +1825,11 @@ export class Game {
     for (const [islandId, group] of groups) {
       if (group.kind === "home") this.founded.add(islandId);
     }
-    const usedKinds = new Set([...this.societies.values()].map((society) => society.kind));
     const ordered = [...groups.entries()]
       .filter(([, group]) => group.kind !== "home" && group.tiles.length >= 8)
       .filter(([islandId]) => !this.founded.has(islandId))
+      .filter(([islandId]) => (this.renewalUntil.get(islandId) ?? 0) <= this.simDays)
       .sort((a, b) => {
-        const uniqueA = usedKinds.has(a[1].kind) ? 1 : 0;
-        const uniqueB = usedKinds.has(b[1].kind) ? 1 : 0;
-        if (uniqueA !== uniqueB) return uniqueA - uniqueB;
         const distA = hexDistance(Number(a[0].split(",")[0]), Number(a[0].split(",")[1]));
         const distB = hexDistance(Number(b[0].split(",")[0]), Number(b[0].split(",")[1]));
         if (distA !== distB) return distA - distB;
@@ -1353,12 +1837,12 @@ export class Game {
       });
     for (const [islandId, group] of ordered) {
       if (this.societies.size >= 10) break;
-      if (usedKinds.has(group.kind)) continue;
       const plan = SOCIETY_PLANS[group.kind];
       if (!plan) continue;
       this.founded.add(islandId);
-      usedKinds.add(group.kind);
+      this.renewalUntil.delete(islandId);
       const same = [...this.societies.values()].filter((society) => society.kind === group.kind).length;
+      const inherited = this.fallenLineages.get(islandId);
       const society: Society = {
         islandId,
         kind: group.kind,
@@ -1369,6 +1853,15 @@ export class Game {
       mood: 50,
         stage: "Camp",
         relation: 0,
+        knowledge: 0,
+        populationCapacity: 2,
+        migrationPressure: 0,
+        era: "Camp",
+        culture: inherited
+          ? forkCulture(inherited, Math.floor(hash2(group.tiles[0]?.q ?? 1, group.tiles[0]?.r ?? 1) * 1_000_000), "renewal")
+          : forkCulture(this.simulation.snapshot.culture, Math.floor(hash2(group.tiles[0]?.q ?? 1, group.tiles[0]?.r ?? 1) * 1_000_000), "diaspora"),
+        culturalInfluence: {},
+        diplomacy: createDiplomaticChannel(yearFromDays(this.simDays)),
       };
       this.societies.set(islandId, society);
       const starter = plan.slice(0, Math.min(4, plan.length));
@@ -1379,9 +1872,128 @@ export class Game {
         if (this.placeBuilding(site, id, { owner: "tribe", free: true, silent: true, treasury: society })) placed += 1;
       }
       if (placed > 0) {
-        this.setHint(`${society.name} keep a camp on the ${group.kind} isle.`);
+        this.setHint(`${society.name} keeps a camp on the ${group.kind} isle.`);
       }
     }
+  }
+
+  /** Resolve slow social transitions independently from building choice. */
+  private evaluateSocietyLifecycles(): void {
+    if (this.spacecraftMode) return;
+    for (const society of [...this.societies.values()]) {
+      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const state = { population, capacity: society.populationCapacity, food: society.food, mood: society.mood, migrationPressure: society.migrationPressure, culture: society.culture };
+      if (shouldSocietyCollapse(state)) {
+        this.collapseSociety(society);
+        continue;
+      }
+      const last = this.fragmentationCooldown.get(society.islandId) ?? -Infinity;
+      if (this.simDays - last < 18 || !shouldSocietyFragment(state)) continue;
+      if (this.foundOffshoot(society)) this.fragmentationCooldown.set(society.islandId, this.simDays);
+    }
+    // Unsettled regions remain candidates after their fallow period, enabling
+    // renewal even when the observer camera never moves.
+    this.tryFoundSocieties();
+  }
+
+  private foundOffshoot(parent: Society): boolean {
+    if (this.societies.size >= 10) return false;
+    const [parentQ, parentR] = parent.islandId.split(",").map(Number);
+    const groups = new Map<string, { kind: LandKind; tiles: Tile[] }>();
+    for (const tile of this.tiles.values()) {
+      if (tile.kind === "home" || this.founded.has(tile.islandId)) continue;
+      const group = groups.get(tile.islandId) ?? { kind: tile.kind, tiles: [] };
+      group.tiles.push(tile);
+      groups.set(tile.islandId, group);
+    }
+    const target = [...groups.entries()]
+      .filter(([, group]) => group.tiles.length >= 8 && Boolean(SOCIETY_PLANS[group.kind]))
+      .sort((a, b) => {
+        const [aq, ar] = a[0].split(",").map(Number);
+        const [bq, br] = b[0].split(",").map(Number);
+        return hexDistance(aq - parentQ, ar - parentR) - hexDistance(bq - parentQ, br - parentR);
+      })[0];
+    if (!target) return false;
+    const [islandId, group] = target;
+    const seed = Math.floor(hash2(parentQ + this.simDays, parentR + group.tiles.length) * 1_000_000);
+    const branch = forkCulture(parent.culture, seed, "diaspora");
+    const suffix = branch.lineage.split("-").at(-1) ?? "branch";
+    const child: Society = {
+      ...parent,
+      islandId,
+      kind: group.kind,
+      name: `${parent.name} ${suffix}`,
+      gold: parent.gold * 0.24,
+      food: parent.food * 0.28,
+      wood: parent.wood * 0.26,
+      mood: Math.max(35, parent.mood - 7),
+      relation: Math.max(-4, parent.relation),
+      knowledge: parent.knowledge * 0.62,
+      populationCapacity: 2,
+      migrationPressure: 0.15,
+      era: "Camp",
+      stage: "Camp",
+      culture: branch,
+      culturalInfluence: {},
+      diplomacy: createDiplomaticChannel(yearFromDays(this.simDays)),
+    };
+    parent.gold *= 0.76;
+    parent.food *= 0.72;
+    parent.wood *= 0.74;
+    this.founded.add(islandId);
+    this.societies.set(islandId, child);
+    for (const id of (SOCIETY_PLANS[group.kind] ?? ["hut", "farm"]).slice(0, 2)) {
+      const site = this.findSite(id, islandId);
+      if (site) this.placeBuilding(site, id, { owner: "tribe", free: true, silent: true, treasury: child });
+    }
+    this.moveResident(parent.islandId, islandId);
+    this.moveResident(parent.islandId, islandId);
+    this.setHint(`${parent.name} sends an offshoot to the ${group.kind} isle; the ${branch.lineage} lineage begins.`);
+    return true;
+  }
+
+  private collapseSociety(society: Society): void {
+    this.fallenLineages.set(society.islandId, structuredClone(society.culture));
+    for (let index = this.people.length - 1; index >= 0; index -= 1) {
+      const person = this.people[index];
+      if (!person?.tribe || person.islandId !== society.islandId) continue;
+      this.peopleGroup.remove(person.mesh);
+      this.people.splice(index, 1);
+    }
+    for (const tile of this.tiles.values()) {
+      const wasHome = tile.islandId === society.islandId && tile.owner === "tribe";
+      const wasClaimant = tile.claimant === society.islandId;
+      const wasContender = tile.contestedWith === society.islandId;
+      if (!wasHome && !wasClaimant && !wasContender) continue;
+      if (wasContender && !wasClaimant) {
+        // The other society retains the frontier once its counterpart vanishes.
+        tile.territory = "economic";
+        tile.contestedWith = null;
+      } else {
+        if (wasHome && tile.buildingMesh) tile.mesh.remove(tile.buildingMesh);
+        if (wasHome) {
+          tile.building = null;
+          tile.buildingMesh = null;
+          tile.owner = null;
+          tile.ready = false;
+          tile.buildLeft = 0;
+          tile.buildTotal = 0;
+        }
+        tile.territory = "memory";
+        tile.claimant = society.islandId;
+        tile.contestedWith = null;
+      }
+      this.paintTerritory(tile);
+      this.persistTile(tile);
+    }
+    this.societies.delete(society.islandId);
+    this.founded.delete(society.islandId);
+    this.renewalUntil.set(society.islandId, this.simDays + 18);
+    this.fragmentationCooldown.delete(society.islandId);
+    this.simulation.retireRegion(society.islandId);
+    this.assignHomes();
+    this.assignJobs();
+    this.setHint(`${society.name} collapses; its abandoned works become a memory for a future settlement.`);
   }
 
   private seedAnimals(): void {
@@ -1451,13 +2063,22 @@ export class Game {
     if ((this.directive === "frontier" || this.goal === "explore") && this.tryAutonomousFrontier()) return;
     if (this.hasPlayerConstruction()) return;
     const snap = this.civSnapshot();
-    const id = chooseNextBuilding(snap, (building) => this.canUseBuilding(building, snap) && this.canSite(building), this.directive);
+    const localDirective = this.directive === "balanced" ? this.directiveForCulture(this.simulation.snapshot.culture.traits) : this.directive;
+    const id = chooseNextBuilding(snap, (building) => this.canUseBuilding(building, snap) && this.canSite(building), localDirective);
     if (!id) return;
     const site = this.findSite(id);
     if (!site) return;
     if (this.placeBuilding(site, id, { owner: "player", silent: true })) {
-      this.setHint(`The ${eraName(snap.people, snap.buildingTotal).toLowerCase()} starts a ${BUILDINGS[id].name.toLowerCase()}.`);
+      this.setHint(`${this.simulation.snapshot.culture.lineage} custom favors a ${BUILDINGS[id].name.toLowerCase()}.`);
     }
+  }
+
+  private directiveForCulture(traits: CultureTraits): Directive {
+    if (traits.stewardship > 0.62) return "food";
+    if (traits.curiosity > 0.62) return "wealth";
+    if (traits.cooperation > 0.64 || traits.resilience > 0.65) return "culture";
+    if (traits.mobility > 0.68) return "frontier";
+    return "growth";
   }
 
   private tryAutonomousDiplomacy(): void {
@@ -1465,6 +2086,63 @@ export class Game {
     const targetRoutes = this.goal === "network" ? this.goalTarget() : Math.max(1, Math.ceil(this.societies.size / 3));
     if (this.tradeRoutes.size >= targetRoutes) return;
     this.sendEnvoy(true);
+  }
+
+  /** Agreements only become true when the message arrives. This separates the
+   * information layer from a shipment and lets trust decay during isolation. */
+  private advanceRegionalDiplomacy(): void {
+    const year = yearFromDays(this.simDays);
+    const playerLanguage = this.simulation.snapshot.culture.language;
+    const infrastructure = this.playerInfrastructure();
+    for (const society of this.societies.values()) {
+      const [q, r] = society.islandId.split(",").map(Number);
+      const affinity = playerLanguage.family === society.culture.language.family ? 0.95 : Math.max(0.12, 1 - Math.abs(playerLanguage.boundary - society.culture.language.boundary) * 0.7);
+      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const result = advanceDiplomaticChannel(society.diplomacy, year, {
+        infrastructure: Math.min(1, infrastructure.ports * 0.35 + infrastructure.roads * 0.04 + (this.findPort("tribe", society.islandId) ? 0.28 : 0)),
+        languageAffinity: affinity,
+        scarcity: Math.max(0, 1 - society.food / Math.max(3, population * 2.5)),
+      });
+      society.diplomacy = result.channel;
+      for (const arrival of result.arrivals) {
+        society.relation = THREE.MathUtils.clamp(society.relation + arrival.relationDelta, -60, 70);
+        if (arrival.treaty === "trade-pact") {
+          society.gold += 5;
+          this.mood = Math.min(100, this.mood + 2);
+          this.createTradeRoute(society);
+          this.setHint(`${society.name} accepts a trade pact. Trust ${Math.round(society.diplomacy.trust * 100)}%; a route can now carry goods.`);
+        } else if (arrival.treaty === "parley") {
+          this.setHint(`${society.name} receives the envoy but only agrees to a cautious parley. Reliable contact must continue.`);
+        } else if (arrival.treaty === "hostile") {
+          this.setHint(`${society.name} receives the rival claim and closes its border. Trust falls before conflict begins.`);
+        }
+      }
+      // Geographic distance is intentionally unused in the resolution: it was
+      // paid at dispatch time. Once a message arrives, context—not teleporting
+      // distance—determines its credibility.
+      void q; void r;
+    }
+  }
+
+  private resolveRegionalConflicts(): void {
+    const player = this.civSnapshot();
+    const defense = player.counts.forge * 0.18 + this.playerInfrastructure().roads * 0.025;
+    const diplomacy = player.counts.market * 0.24 + this.simulation.snapshot.institutions.legitimacy * 0.22;
+    for (const society of this.societies.values()) {
+      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const result = resolveConflict({
+        relation: society.relation,
+        scarcity: Math.max(0, 1 - society.food / Math.max(3, population * 2.5)),
+        grievance: Math.max(0, -society.relation / 45),
+        defense,
+        diplomacy,
+      });
+      if (result.outcome === "none") continue;
+      society.relation = THREE.MathUtils.clamp(society.relation + result.relationDelta, -60, 70);
+      society.food *= result.foodMultiplier;
+      this.mood = THREE.MathUtils.clamp(this.mood + result.stabilityDelta * 100, 0, 100);
+      this.setHint(`${society.name}: ${result.outcome} follows regional grievance and bargaining.`);
+    }
   }
 
   private societyTurn = 0;
@@ -1498,7 +2176,15 @@ export class Game {
         counts,
         buildingTotal,
       };
-      const id = chooseNextBuilding(snap, (building) => isUnlocked(building, people, buildingTotal) && this.canSite(building, society.islandId, society));
+      const id = chooseNextBuilding(
+        snap,
+        (building) =>
+          isUnlocked(building, people, buildingTotal) &&
+          this.techLevel(society.knowledge) >= BUILDING_TECH[building] &&
+          this.eraAllows(society.era, building, society.culture) &&
+          this.canSite(building, society.islandId, society),
+        this.directiveForCulture(society.culture.traits),
+      );
       if (!id) continue;
       const site = this.findSite(id, society.islandId);
       if (!site) continue;
@@ -1555,24 +2241,11 @@ export class Game {
   }
 
   private tickWorld(simDt: number): void {
-    const beforeSeason = this.season;
     const beforeYear = yearFromDays(this.simDays);
     this.simDays += simDt / SECONDS_PER_DAY;
     this.season = seasonFromDays(this.simDays);
     const year = yearFromDays(this.simDays);
 
-    if (this.season !== beforeSeason) {
-      this.applySeason(this.season);
-      this.setHint(
-        this.season === "Winter"
-          ? "Winter settles in. Fields go still."
-          : this.season === "Spring"
-            ? "Spring returns. Crops wake up."
-            : this.season === "Summer"
-              ? "High summer. Farms are busy."
-              : "Autumn gold. Harvest while you can.",
-      );
-    }
     if (year !== beforeYear) {
       this.gold += 6;
       this.wood += 3;
@@ -1581,6 +2254,7 @@ export class Game {
         society.wood += 2;
       }
       this.setHint(`Year ${year} begins. Stores are counted and shared.`);
+      this.captureChronicleCheckpoint(year);
     }
 
     this.tickConstruction(simDt);
@@ -1590,10 +2264,11 @@ export class Game {
       this.migrationResolved = false;
     }
 
-    if (this.simDays >= this.weatherUntil) {
-      const roll = hash2(Math.floor(this.simDays * 13 + year * 5), Math.floor(this.simDays));
-      const next: Weather = roll < 0.52 ? "clear" : roll < 0.8 ? "rain" : "storm";
-      this.weatherUntil = this.simDays + 0.35 + roll * 0.65;
+    if (!this.spacecraftMode && this.weatherDays >= this.weatherUntil) {
+      const roll = hash2(Math.floor(this.weatherDays * 13), Math.floor(this.weatherDays));
+      const next: Weather = roll < 0.76 ? "clear" : roll < 0.94 ? "rain" : "storm";
+      const duration = next === "clear" ? 0.85 + roll * 1.1 : next === "rain" ? 0.12 + roll * 0.14 : 0.08 + roll * 0.1;
+      this.weatherUntil = this.weatherDays + duration * this.weatherPace;
       if (next !== this.weather) {
         this.weather = next;
         this.setHint(WEATHER_COPY[next]);
@@ -1632,7 +2307,7 @@ export class Game {
       }
     }
 
-    const weatherFarm = this.weather === "rain" ? 1.28 : this.weather === "storm" ? 0.82 : 1;
+    const weatherFarm = this.spacecraftMode ? 1.12 : this.weather === "rain" ? 1.28 : this.weather === "storm" ? 0.82 : 1;
     const drought = this.event === "drought" ? 0.35 : 1;
     const ashFarm = this.event === "ash" ? 0.7 : 1;
     const playerYield = { food: 0, gold: 0, wood: 0 };
@@ -1707,47 +2382,68 @@ export class Game {
     }
 
     const folk = this.citizens();
+    const householdSignals = this.households.advance(
+      this.people.map((person) => ({
+        id: person.id,
+        regionId: person.tribe ? person.islandId : "player",
+        homeKey: `${person.homeQ},${person.homeR}`,
+        age: person.age,
+        role: person.role,
+        seed: person.seed,
+      })),
+      [{ id: "player", food: this.food, housing, mood: this.mood }],
+      simDt / YEAR_SECONDS,
+    );
+    this.householdMetrics = householdSignals.get("player") ?? null;
+    const household = this.householdMetrics;
+    if (household) happiness += (household.cohesion - household.inequality) * 8;
     const alliedTowns = [...this.societies.values()].filter((society) => society.relation >= 16).length;
     if (folk.length > 0 && this.food < 1) happiness -= 18;
     if (folk.length > housing) happiness -= 10;
-    if (this.weather === "storm") happiness -= 6;
-    if (this.weather === "rain") happiness += 2;
+    if (!this.spacecraftMode && this.weather === "storm") happiness -= 6;
+    if (!this.spacecraftMode && this.weather === "rain") happiness += 2;
     if (this.event === "festival") happiness += 16;
     if (this.event === "drought") happiness -= 8;
     if (this.event === "wildfire") happiness -= 7;
+    if (this.spacecraftMode) {
+      const readyModules = [...this.tiles.values()].filter((tile) => tile.owner === "player" && tile.ready).length;
+      const repairCapacity = [...this.tiles.values()].filter((tile) => tile.owner === "player" && tile.ready && (tile.building === "forge" || tile.building === "mine")).length;
+      const pressure = Math.max(0, folk.length - readyModules * 1.25) * 0.07;
+      this.hullIntegrity = THREE.MathUtils.clamp(this.hullIntegrity + (repairCapacity * 0.018 - pressure) * simDt / SECONDS_PER_DAY, 12, 100);
+      happiness += (this.hullIntegrity - 70) * 0.16;
+    }
     const deltaYears = simDt / YEAR_SECONDS;
     const annualProduction = {
-      food: playerYield.food / Math.max(deltaYears, 0.000001),
-      wood: playerYield.wood / Math.max(deltaYears, 0.000001) + 0.5,
+      food: playerYield.food / Math.max(deltaYears, 0.000001) * (household?.laborReadiness ?? 0.75) * this.originProfile.production.food,
+      wood: playerYield.wood / Math.max(deltaYears, 0.000001) * (household?.laborReadiness ?? 0.75) * this.originProfile.production.wood + (this.spacecraftMode ? 2.2 : 0.5),
       gold:
-        playerYield.gold / Math.max(deltaYears, 0.000001) +
-        0.7 +
+        playerYield.gold / Math.max(deltaYears, 0.000001) * (household?.laborReadiness ?? 0.75) +
+        (this.spacecraftMode ? 3.2 : 0.7) +
         markets * (0.8 + this.societies.size * 0.15) +
         (this.event === "trade" ? markets * 2.2 : 0) +
-        alliedTowns * markets * 0.45 + this.tradeRoutes.size * markets * 1.25,
+        (alliedTowns * markets * 0.45 + this.tradeRoutes.size * markets * 1.25) * this.originProfile.production.gold,
     };
     const snap = this.civSnapshot();
     const disruption = this.event === "drought" || this.event === "flood" || this.event === "wildfire" || this.event === "ash"
       ? this.event
       : this.weather === "storm" ? "storm" : "none";
     this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
-    const simulated = this.simulation.advance({
+    const localInputs: SimulationInputs = {
       deltaDays: simDt / SECONDS_PER_DAY,
       population: folk.length,
       housing,
       annualProduction,
       buildings: snap.counts,
-      moodPressure: (happiness - 50) / 50,
+      moodPressure: (happiness - 50) / 50 - (household?.migrationPressure ?? 0) * 0.12 + this.originProfile.moodPressure,
       infrastructure: this.playerInfrastructure(),
-      disruption,
-    });
-    if (simulated) {
-      this.food = simulated.stores.food;
-      this.wood = simulated.stores.wood;
-      this.gold = simulated.stores.gold;
-      this.technology = simulated.knowledge;
-      this.mood = Math.round((simulated.health * 0.45 + simulated.stability * 0.55) * 100);
-    }
+      disruption: this.spacecraftMode && this.hullIntegrity < 38 ? "storm" : disruption,
+      fidelity: "local",
+      culturalInfluence: this.culturalInfluence,
+      origin: this.origin,
+    };
+    this.lastSimulationInputs = localInputs;
+    const simulated = this.simulation.advance(localInputs);
+    if (simulated) this.applySimulationSnapshot(simulated);
 
     if (this.event === "migration" && !this.migrationResolved && this.food > 7 && folk.length < housing) {
       const home = [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.building === "hut" && tile.ready);
@@ -1760,29 +2456,67 @@ export class Game {
       }
     }
 
+    const regionalInputs: RegionSimulationInput[] = [];
     for (const society of this.societies.values()) {
       const yieldNow = societyYield.get(society.islandId) ?? { food: 0, gold: 0, wood: 0 };
       const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
-      society.food = Math.max(0, society.food + yieldNow.food - (tribe.length * 1.5 * simDt) / YEAR_SECONDS);
-      society.gold += yieldNow.gold + (0.4 * simDt) / YEAR_SECONDS;
-      if (society.relation <= -14) society.gold += (0.7 * simDt) / YEAR_SECONDS;
-      society.wood += yieldNow.wood + (0.35 * simDt) / YEAR_SECONDS;
       let tribeHappiness = 42;
       let tribeHousing = 0;
+      const counts = emptyCounts();
       for (const tile of this.tiles.values()) {
         if (tile.islandId !== society.islandId || tile.owner !== "tribe" || !tile.building) continue;
         tribeHappiness += BUILDINGS[tile.building].happiness;
         tribeHousing += BUILDINGS[tile.building].housing;
+        counts[tile.building] += 1;
       }
       if (society.food < 1 && tribe.length > 0) tribeHappiness -= 16;
       if (tribe.length > tribeHousing) tribeHappiness -= 10;
-      society.mood = Math.max(0, Math.min(100, tribeHappiness));
+      const annual = {
+        food: yieldNow.food / Math.max(deltaYears, 0.000001),
+        wood: yieldNow.wood / Math.max(deltaYears, 0.000001) + 0.35,
+        gold: yieldNow.gold / Math.max(deltaYears, 0.000001) + 0.4 + (society.relation <= -14 ? 0.7 : 0),
+      };
+      regionalInputs.push({
+        id: society.islandId,
+        stores: { food: society.food, gold: society.gold, wood: society.wood },
+        knowledge: 0,
+        inputs: {
+          deltaDays: simDt / SECONDS_PER_DAY,
+          population: tribe.length,
+          housing: tribeHousing,
+          annualProduction: annual,
+          buildings: counts,
+          moodPressure: (tribeHappiness - 50) / 50,
+          infrastructure: { roads: 0, ports: 0, tradeRoutes: 0 },
+          disruption,
+          fidelity: "remote",
+          culturalInfluence: society.culturalInfluence,
+        },
+      });
       society.stage = developmentStage(tribe.length, [...this.tiles.values()].filter(
         (tile) => tile.islandId === society.islandId && tile.owner === "tribe" && tile.building,
       ).length);
-      society.gold = Math.min(140, society.gold);
-      society.wood = Math.min(90, society.wood);
-      society.food = Math.min(55, society.food);
+    }
+    const regionalSnapshots = this.simulation.advanceRegions(regionalInputs);
+    for (const society of this.societies.values()) {
+      const remote = regionalSnapshots.get(society.islandId);
+      if (!remote) continue;
+      society.food = Math.min(55, remote.stores.food);
+      society.gold = Math.min(140, remote.stores.gold);
+      society.wood = Math.min(90, remote.stores.wood);
+      society.mood = Math.round((remote.health * 0.45 + remote.stability * 0.55) * 100);
+      society.knowledge = remote.knowledge;
+      society.populationCapacity = remote.populationCapacity;
+      society.migrationPressure = remote.migrationPressure;
+      society.era = remote.era;
+      society.culture = remote.culture;
+    }
+
+    this.regionalNetworkTimer += simDt;
+    if (this.regionalNetworkTimer >= SECONDS_PER_DAY * 0.5) {
+      const networkYears = this.regionalNetworkTimer / YEAR_SECONDS;
+      this.regionalNetworkTimer = 0;
+      this.exchangeBetweenRegions(networkYears);
     }
 
     this.growTimer += simDt;
@@ -1795,6 +2529,12 @@ export class Game {
     if (this.hungerTimer > SECONDS_PER_DAY * 1.4) {
       this.hungerTimer = 0;
       this.tryHunger();
+    }
+
+    this.lifecycleTimer += simDt;
+    if (this.lifecycleTimer > SECONDS_PER_DAY * 2.4) {
+      this.lifecycleTimer = 0;
+      this.evaluateSocietyLifecycles();
     }
 
     this.autoTimer += simDt;
@@ -1812,6 +2552,7 @@ export class Game {
     if (this.diplomacyTimer > SECONDS_PER_DAY * 3) {
       this.diplomacyTimer = 0;
       this.tryAutonomousDiplomacy();
+      this.resolveRegionalConflicts();
     }
     this.updateTradeRoutes(simDt, this.clock.elapsedTime);
     this.evaluateGoal();
@@ -1830,8 +2571,38 @@ export class Game {
       tile.buildLeft = Math.max(0, tile.buildLeft - simDt / SECONDS_PER_DAY);
       const done = tile.buildTotal <= 0 ? 1 : 1 - tile.buildLeft / tile.buildTotal;
       tile.buildingMesh.scale.setScalar(0.28 + done * 0.72);
+      this.persistTile(tile);
       if (tile.buildLeft <= 0) this.finishBuilding(tile, false);
     }
+  }
+
+  private applySimulationSnapshot(snapshot: import("./simulation/types.ts").SimulationSnapshot): void {
+    this.food = snapshot.stores.food;
+    this.wood = snapshot.stores.wood;
+    this.gold = snapshot.stores.gold;
+    this.technology = snapshot.knowledge;
+    this.mood = Math.round((snapshot.health * 0.45 + snapshot.stability * 0.55) * 100);
+    if (snapshot.originCrisis && snapshot.originCrisis.outcome !== this.lastOriginCrisis) {
+      this.lastOriginCrisis = snapshot.originCrisis.outcome;
+      this.setHint(`Year ${snapshot.originCrisis.year}: ${this.originProfile.title} faces ${snapshot.originCrisis.outcome}. Its institutions and knowledge path will now remember this fork.`);
+    }
+  }
+
+  private captureChronicleCheckpoint(year = yearFromDays(this.simDays)): void {
+    this.chronicle.checkpoint(year, this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot);
+  }
+
+  private persistTile(tile: Tile): void {
+    this.worldState.save(tile.q, tile.r, {
+      building: tile.building,
+      owner: tile.owner,
+      territory: tile.territory,
+      claimant: tile.claimant,
+      contestedWith: tile.contestedWith,
+      buildLeft: tile.buildLeft,
+      buildTotal: tile.buildTotal,
+      ready: tile.ready,
+    });
   }
 
   private staffFactor(tile: Tile): number {
@@ -1841,7 +2612,7 @@ export class Game {
       tile.building === "orchard" ||
       tile.building === "lumber" ||
       tile.building === "fishery";
-    if (outdoor && isNight(hourFromDays(this.simDays))) return 0;
+    if (outdoor && isNight(hourFromDays(this.visualDays))) return 0;
     const workers = this.people.filter(
       (person) => person.islandId === tile.islandId && person.workQ === tile.q && person.workR === tile.r,
     );
@@ -1859,6 +2630,166 @@ export class Game {
     return { roads, ports, tradeRoutes: this.tradeRoutes.size };
   }
 
+  private exchangeBetweenRegions(years: number): void {
+    const player = this.civSnapshot();
+    const playerSim = this.simulation.snapshot;
+    const playerInfrastructure = this.playerInfrastructure();
+    const regions: NetworkRegion[] = [{
+      id: "player", q: 0, r: 0, population: player.people, capacity: playerSim.populationCapacity,
+      food: this.food, wood: this.wood, gold: this.gold, knowledge: this.technology,
+      stability: playerSim.stability, migrationPressure: playerSim.migrationPressure,
+      markets: player.counts.market, ports: playerInfrastructure.ports,
+      institutions: player.counts.market + player.counts.shrine + player.counts.forge,
+        culture: playerSim.culture.traits,
+        language: playerSim.culture.language,
+    }];
+    for (const society of this.societies.values()) {
+      const [q, r] = society.islandId.split(",").map(Number);
+      const tiles = [...this.tiles.values()].filter((tile) => tile.islandId === society.islandId && tile.owner === "tribe" && tile.building);
+      regions.push({
+        id: society.islandId, q, r,
+        population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length,
+        capacity: society.populationCapacity, food: society.food, wood: society.wood, gold: society.gold,
+        knowledge: society.knowledge, stability: society.mood / 100, migrationPressure: society.migrationPressure,
+        markets: tiles.filter((tile) => tile.building === "market").length,
+        ports: tiles.filter((tile) => tile.coast && (tile.building === "market" || tile.building === "fishery")).length,
+        institutions: tiles.filter((tile) => tile.building === "market" || tile.building === "shrine" || tile.building === "forge").length,
+        culture: society.culture.traits,
+        language: society.culture.language,
+      });
+    }
+    const effects = exchangeRegions(regions, years);
+    const playerEffect = effects.get("player");
+    if (playerEffect) {
+      this.food = Math.max(0, this.food + playerEffect.food);
+      this.wood = Math.max(0, this.wood + playerEffect.wood);
+      this.gold = Math.max(0, this.gold + playerEffect.gold);
+      this.technology = Math.max(0, this.technology + playerEffect.knowledge);
+      this.mood = Math.max(0, Math.min(100, this.mood + playerEffect.stability * 100));
+      this.culturalInfluence = this.blendCultureInfluence(this.culturalInfluence, playerEffect.culture);
+    }
+    for (const society of this.societies.values()) {
+      const effect = effects.get(society.islandId);
+      if (!effect) continue;
+      society.food = Math.max(0, Math.min(55, society.food + effect.food));
+      society.wood = Math.max(0, Math.min(90, society.wood + effect.wood));
+      society.gold = Math.max(0, Math.min(140, society.gold + effect.gold));
+      society.knowledge = Math.max(0, society.knowledge + effect.knowledge);
+      society.mood = Math.max(0, Math.min(100, society.mood + effect.stability * 100));
+      society.culturalInfluence = this.blendCultureInfluence(society.culturalInfluence, effect.culture);
+    }
+    this.reconcileCommunicationLinks(regions);
+    const origins = regions.filter((region) => (effects.get(region.id)?.migrants ?? 0) < 0);
+    const destinations = regions.filter((region) => (effects.get(region.id)?.migrants ?? 0) > 0);
+    for (const destination of destinations) {
+      let incoming = effects.get(destination.id)?.migrants ?? 0;
+      while (incoming > 0) {
+        const origin = origins.find((candidate) => (effects.get(candidate.id)?.migrants ?? 0) < 0);
+        if (!origin || !this.moveResident(origin.id, destination.id)) break;
+        const originEffect = effects.get(origin.id);
+        if (originEffect) originEffect.migrants += 1;
+        incoming -= 1;
+      }
+    }
+  }
+
+  private blendCultureInfluence(current: Partial<CultureTraits>, signal: CultureTraits): Partial<CultureTraits> {
+    const next: Partial<CultureTraits> = {};
+    for (const trait of Object.keys(signal) as (keyof CultureTraits)[]) {
+      const prior = current[trait] ?? 0;
+      // Imported practices fade unless local conditions keep selecting for them.
+      next[trait] = THREE.MathUtils.clamp(prior * 0.76 + signal[trait], -0.35, 0.35);
+    }
+    return next;
+  }
+
+  /** Visualize established interregional exchange as a persistent signal and moving packet. */
+  private reconcileCommunicationLinks(regions: readonly NetworkRegion[]): void {
+    const player = regions.find((region) => region.id === "player");
+    if (!player) return;
+    const playerReady = player.markets + player.institutions >= 2;
+    const wanted = new Set<string>();
+    for (const region of regions) {
+      if (region.id === "player") continue;
+      const ready = playerReady && region.markets + region.institutions + region.ports >= 1;
+      if (!ready) continue;
+      const key = `player:${region.id}`;
+      wanted.add(key);
+      if (this.communicationLinks.has(key)) continue;
+      const from = this.regionPoint("player");
+      const to = this.regionPoint(region.id);
+      if (!from || !to) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: 0x8de9ff, dashSize: 1.15, gapSize: 0.72, transparent: true, opacity: 0.72 }));
+      line.computeLineDistances();
+      const pulse = new THREE.Mesh(
+        new THREE.SphereGeometry(0.23, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0xe9fbff, emissive: 0x2ecff0, emissiveIntensity: 2.2, roughness: 0.2 }),
+      );
+      this.communicationGroup.add(line, pulse);
+      this.communicationLinks.set(key, { source: from, destination: to, line, pulse });
+      this.setHint(`A signal corridor opens with ${this.societies.get(region.id)?.name ?? "a neighboring region"}. Knowledge and supplies can now travel visibly.`);
+    }
+    for (const [key, link] of this.communicationLinks) {
+      if (wanted.has(key)) continue;
+      this.communicationGroup.remove(link.line, link.pulse);
+      link.line.geometry.dispose();
+      (link.line.material as THREE.Material).dispose();
+      link.pulse.geometry.dispose();
+      (link.pulse.material as THREE.Material).dispose();
+      this.communicationLinks.delete(key);
+    }
+  }
+
+  private regionPoint(id: string): THREE.Vector3 | null {
+    if (id === "player") {
+      const home = [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.ready && tile.building === "market")
+        ?? [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.ready);
+      return home ? this.tileTop(home).add(new THREE.Vector3(0, 0.8, 0)) : null;
+    }
+    const center = [...this.tiles.values()].find((tile) => tile.islandId === id && tile.owner === "tribe" && tile.ready && tile.building === "market")
+      ?? [...this.tiles.values()].find((tile) => tile.islandId === id && tile.owner === "tribe" && tile.ready);
+    return center ? this.tileTop(center).add(new THREE.Vector3(0, 0.8, 0)) : null;
+  }
+
+  private updateCommunicationLinks(time: number): void {
+    for (const [key, link] of this.communicationLinks) {
+      const phase = ((time * 0.28 + key.length * 0.13) % 1 + 1) % 1;
+      link.pulse.position.copy(link.source).lerp(link.destination, phase);
+      link.pulse.position.y += Math.sin(phase * Math.PI) * 1.2;
+    }
+  }
+
+  private moveResident(originId: string, destinationId: string): boolean {
+    const originTribe = originId !== "player";
+    const resident = this.people.find((person) => person.tribe === originTribe && (originTribe ? person.islandId === originId : true));
+    const destinationTribe = destinationId !== "player";
+    const home = [...this.tiles.values()].find(
+      (tile) =>
+        tile.building === "hut" && tile.ready && tile.owner === (destinationTribe ? "tribe" : "player") &&
+        (!destinationTribe || tile.islandId === destinationId),
+    );
+    if (!resident || !home) return false;
+    resident.tribe = destinationTribe;
+    resident.islandId = home.islandId;
+    resident.q = home.q;
+    resident.r = home.r;
+    resident.destQ = home.q;
+    resident.destR = home.r;
+    resident.homeQ = home.q;
+    resident.homeR = home.r;
+    resident.workQ = home.q;
+    resident.workR = home.r;
+    resident.progress = 1;
+    resident.wait = 0.9;
+    this.setRole(resident, "villager");
+    resident.mesh.position.copy(this.tileTop(home).add(resident.offset));
+    this.assignHomes();
+    this.assignJobs();
+    this.setHint(`${originId === "player" ? "A villager" : "A migrant"} resettled in ${destinationId === "player" ? "your civilization" : this.societies.get(destinationId)?.name ?? "a neighboring region"}.`);
+    return true;
+  }
+
   private housingOf(owner: "player" | "tribe", islandId?: string): number {
     let housing = 0;
     for (const tile of this.tiles.values()) {
@@ -1872,7 +2803,7 @@ export class Game {
   private tryBirths(): void {
     const folk = this.citizens();
     const housing = this.housingOf("player");
-    if (this.simulation.snapshot.birthReadiness > 0.34 && folk.length < housing && this.food > 4) {
+    if (this.simulation.snapshot.birthReadiness > 0.34 && (this.householdMetrics?.birthReadiness ?? 0.5) > 0.42 && folk.length < housing && this.food > 4) {
       const hut = [...this.tiles.values()].find(
         (tile) => tile.building === "hut" && tile.owner === "player" && tile.buildLeft <= 0,
       );
@@ -1918,7 +2849,9 @@ export class Game {
   }
 
   private exileHungry(tribe: boolean, islandId?: string): boolean {
+    const preferred = !tribe ? this.householdMetrics?.vulnerableResidentId : null;
     const person =
+      (preferred ? this.people.find((entry) => entry.id === preferred && entry.tribe === tribe) : undefined) ??
       this.people.find(
         (entry) =>
           entry.tribe === tribe &&
@@ -1942,6 +2875,7 @@ export class Game {
       const color = tile.baseTop.clone();
       if (winter) color.lerp(new THREE.Color(0xdfe6dc), 0.55);
       else if (autumn) color.offsetHSL(-0.04, 0.05, 0.04);
+      this.applyTerritoryColor(color, tile.owner, tile.territory);
       tile.topMat.color.copy(color);
       if (tile.buildingMesh) {
         tile.buildingMesh.traverse((object) => {
@@ -1953,6 +2887,27 @@ export class Game {
   }
 
   private updateLighting(): void {
+    if (this.spacecraftMode) {
+      this.skyDome.visible = false;
+      this.sunDisc.visible = false;
+      this.moonDisc.visible = false;
+      this.clouds.visible = false;
+      this.water.mesh.visible = false;
+      this.scene.background = new THREE.Color(0x02050d);
+      if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0;
+      this.hemi.intensity = 0.72;
+      this.hemi.color.setHex(0x9dc9ff);
+      this.hemi.groundColor.setHex(0x111827);
+      this.fill.intensity = 0.5;
+      this.sunLight.intensity = 1.85;
+      this.sunLight.color.setHex(0xe4f3ff);
+      this.sunLight.position.set(14, 28, 12);
+      this.sunLight.target.position.set(0, 0, 0);
+      this.renderer.toneMappingExposure = 1.12;
+      this.scene.environmentIntensity = 0.46;
+      (this.stars.material as THREE.PointsMaterial).opacity = 0.92;
+      return;
+    }
     if (this.cosmicMode) {
       this.skyDome.visible = false;
       this.sunDisc.visible = false;
@@ -1965,7 +2920,7 @@ export class Game {
       return;
     }
     this.skyDome.visible = true;
-    const hour = hourFromDays(this.simDays);
+    const hour = hourFromDays(this.visualDays);
     const day = daylight(hour);
     const dir = new THREE.Vector3();
     sunFromHour(hour, dir);
@@ -2067,7 +3022,7 @@ export class Game {
   }
 
   private refreshHud(): void {
-    const hour = hourFromDays(this.simDays);
+    const hour = hourFromDays(this.visualDays);
     const clock = `${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.floor((hour % 1) * 60)).padStart(2, "0")}`;
     const snap = this.civSnapshot();
     const sky =
@@ -2097,8 +3052,12 @@ export class Game {
       food: this.food, wood: this.wood, mood: this.mood, people: snap.people,
       others: this.people.filter((person) => person.tribe).length, towns: this.societies.size, tradeRoutes: this.tradeRoutes.size, housing: snap.housing,
       technology: this.techLevel(),
+      evolution: this.simulation.snapshot.era,
+      capacity: this.simulation.snapshot.populationCapacity,
       health: Math.round(this.simulation.snapshot.health * 100),
-      land: Math.round(((this.simulation.snapshot.ecology.soil + this.simulation.snapshot.ecology.forest + this.simulation.snapshot.ecology.fish) / 3) * 100),
+      land: this.spacecraftMode ? Math.round(this.hullIntegrity) : Math.round(((this.simulation.snapshot.ecology.soil + this.simulation.snapshot.ecology.forest + this.simulation.snapshot.ecology.fish) / 3) * 100),
+      culture: `${this.simulation.snapshot.culture.language.dialect} · ${this.simulation.snapshot.culture.practices[0] ?? "unsettled custom"}`,
+      scenario: this.spacecraftMode ? "spacecraft" : "planet",
     });
     if (this.citizens().length > 0 && this.food < 1) this.setHint("The village is hungry. Auto will try a farm or fishery.");
   }
@@ -2110,24 +3069,13 @@ export class Game {
     this.activityLog.splice(5);
     const feed = document.querySelector("#activity-feed");
     if (feed) feed.innerHTML = this.activityLog.map((entry) => `<li>${entry}</li>`).join("");
-  }
-
-  private panCamera(dt: number): void {
-    if (this.keys.size === 0) return;
-    const facing = new THREE.Vector3().subVectors(this.controls.target, this.camera.position);
-    facing.y = 0;
-    if (facing.lengthSq() < 0.0001) facing.set(0, 0, -1);
-    facing.normalize();
-    const right = new THREE.Vector3(facing.z, 0, -facing.x);
-    const delta = new THREE.Vector3();
-    const speed = 28 * dt;
-    if (this.keys.has("w") || this.keys.has("arrowup")) delta.addScaledVector(facing, speed);
-    if (this.keys.has("s") || this.keys.has("arrowdown")) delta.addScaledVector(facing, -speed);
-    if (this.keys.has("d") || this.keys.has("arrowright")) delta.addScaledVector(right, speed);
-    if (this.keys.has("a") || this.keys.has("arrowleft")) delta.addScaledVector(right, -speed);
-    if (delta.lengthSq() === 0) return;
-    this.controls.target.add(delta);
-    this.camera.position.add(delta);
+    this.chronicle.record(
+      this.simDays,
+      classifyChronicleEvent(text),
+      text,
+      ["player", ...this.societies.keys()],
+      { population: this.citizens().length, food: this.food, gold: this.gold, knowledge: this.technology, towns: this.societies.size },
+    );
   }
 
   private followWorld(): void {
@@ -2142,6 +3090,66 @@ export class Game {
 
   private updateScaleOfWorld(time: number): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
+    if (!this.spacecraftMode && this.observatoryView === "world" && !this.observerMove?.observatoryView && distance <= 10.5) {
+      this.setObservatoryView("subatomic");
+      return;
+    }
+    if (this.observatoryView === "subatomic" && distance > 175) {
+      this.observatoryView = "world";
+      this.refreshViewReadout();
+    }
+    if (this.observatoryView === "subatomic") {
+      this.cosmicMode = true;
+      this.cosmos.group.visible = false;
+      this.subatomic.group.visible = true;
+      this.terrainChunks.group.visible = false;
+      this.tileGroup.visible = false;
+      this.roadGroup.visible = false;
+      this.tradeGroup.visible = false;
+      this.communicationGroup.visible = false;
+      this.peopleGroup.visible = false;
+      this.life.group.visible = false;
+      this.clouds.visible = false;
+      this.water.mesh.visible = false;
+      this.subatomic.update(time);
+      return;
+    }
+    this.subatomic.group.visible = false;
+    if (this.spacecraftMode) {
+      this.cosmicMode = false;
+      this.cosmos.group.visible = false;
+      this.terrainChunks.group.visible = false;
+      this.tileGroup.visible = true;
+      this.roadGroup.visible = true;
+      this.tradeGroup.visible = true;
+      this.communicationGroup.visible = false;
+      this.peopleGroup.visible = true;
+      this.spacecraft?.update(time);
+      return;
+    }
+    if (this.observatoryView === "universe") {
+      this.cosmicMode = true;
+      this.cosmos.group.visible = true;
+      this.cosmos.group.position.set(0, 0, 0);
+      this.cosmos.group.children.forEach((child) => { child.visible = true; });
+      this.cosmos.planet.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const material = object.material as THREE.Material & { opacity?: number };
+        material.opacity = Number(material.userData.cosmicBaseOpacity ?? 1);
+      });
+      this.terrainChunks.group.visible = false;
+      this.tileGroup.visible = false;
+      this.roadGroup.visible = false;
+      this.tradeGroup.visible = false;
+      this.communicationGroup.visible = false;
+      this.peopleGroup.visible = false;
+      this.life.group.visible = false;
+      this.clouds.visible = false;
+      this.water.mesh.visible = false;
+      this.cosmos.update(time, 1700);
+      this.cosmos.planet.visible = true;
+      return;
+    }
     const cosmic = THREE.MathUtils.smoothstep(distance, 340, 680);
     this.cosmicMode = cosmic > 0.35;
     this.cosmos.group.visible = cosmic > 0.01;
@@ -2152,12 +3160,16 @@ export class Game {
     this.cosmos.planet.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       const material = object.material as THREE.Material & { opacity?: number };
-      material.opacity = cosmic;
+      const baseOpacity = Number(material.userData.cosmicBaseOpacity ?? 1);
+      material.opacity = baseOpacity * cosmic;
+      material.transparent = baseOpacity < 1 || cosmic < 0.999;
     });
     this.tileGroup.visible = cosmic < 0.98;
     this.roadGroup.visible = cosmic < 0.98;
     this.tradeGroup.visible = cosmic < 0.98;
+    this.communicationGroup.visible = cosmic < 0.98;
     this.peopleGroup.visible = cosmic < 0.98;
+    this.life.group.visible = cosmic < 0.98;
     this.clouds.visible = cosmic < 0.75;
     this.water.mesh.visible = cosmic < 0.98;
     this.cosmos.update(time, distance);
@@ -2204,15 +3216,27 @@ export class Game {
     const time = this.clock.elapsedTime;
     const simDt = this.speed === 0 ? 0 : dt * this.speed;
 
+    this.advanceObserverMove(dt);
+    this.moveObserverWithArrows(dt);
     this.controls.update();
-    this.panCamera(dt);
     this.followWorld();
     this.updateScaleOfWorld(time);
     this.ensureWorld();
-    this.water.update(time);
-    this.life.update(dt, time, this.controls.target, this.weather);
+    if (!this.spacecraftMode) {
+      this.water.update(time);
+      this.life.update(dt, time, this.controls.target, this.weather);
+    }
     this.tuneQuality(dt);
     if (simDt > 0) {
+      if (!this.spacecraftMode) {
+        this.visualDays += dt / SECONDS_PER_DAY;
+        this.weatherDays += dt / SECONDS_PER_DAY;
+      }
+      const nextVisualSeason = seasonFromDays(this.visualDays);
+      if (nextVisualSeason !== this.visualSeason) {
+        this.visualSeason = nextVisualSeason;
+        this.applySeason(this.visualSeason);
+      }
       this.tickWorld(simDt);
     }
     this.updateLighting();
@@ -2237,22 +3261,8 @@ export class Game {
         child.scale.setScalar(0.55 + t * 0.9);
         const mat = child.material as THREE.MeshStandardMaterial;
         mat.opacity = (1 - t) * 0.34;
-        child.visible = !isNight(hourFromDays(this.simDays)) || t < 0.85;
+        child.visible = !isNight(hourFromDays(this.visualDays)) || t < 0.85;
       }
-    }
-
-    for (const tile of this.tiles.values()) {
-      const lifted = tile === this.hovered;
-      const target = tile.baseY + (lifted ? 0.09 : 0);
-      tile.mesh.position.y += (target - tile.mesh.position.y) * Math.min(1, dt * 10);
-    }
-
-    if (this.hovered) {
-      const top = this.tileTop(this.hovered);
-      this.hoverRing.position.copy(top);
-      const ringMat = this.hoverRing.material as THREE.LineBasicMaterial;
-      ringMat.opacity = 0.65 + Math.sin(time * 4) * 0.25;
-      if (this.ghost.visible) this.ghost.position.copy(top);
     }
 
     for (let i = this.popIns.length - 1; i >= 0; i -= 1) {
@@ -2265,7 +3275,8 @@ export class Game {
     }
 
     this.updatePeople(simDt, time);
-    this.updateAnimals(simDt, time);
+    if (!this.spacecraftMode) this.updateAnimals(simDt, time);
+    this.updateCommunicationLinks(time);
     for (const object of this.shrineOrbs) {
       object.rotation.y = time * 0.9;
       object.rotation.z = Math.sin(time) * 0.15;

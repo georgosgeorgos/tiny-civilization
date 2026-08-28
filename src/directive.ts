@@ -30,6 +30,25 @@ export function directiveFromText(text: string): Directive | null {
   return directivesFromText(text)[0] ?? null;
 }
 
+/** Written observer controls stay intentionally small and explicit. */
+export function speedFromText(text: string): 0 | 1 | 2 | 4 | 8 | 96 | null {
+  if (/\b(?:pause|stop|halt)\s+(?:time|simulation)|\bpause\b/i.test(text)) return 0;
+  if (/\b(?:years?|eras?)\s+(?:of\s+)?(?:pace|speed)|\b(?:speed|pace)\s+(?:of\s+)?(?:years?|eras?)\b/i.test(text)) return 96;
+  const match = text.match(/\b(?:speed|pace|time)\s*(?:to|at|of|=)?\s*(96|0|1|2|4|8)\s*(?:x|×)?\b/i);
+  if (!match) return null;
+  const speed = Number(match[1]);
+  return speed === 0 || speed === 1 || speed === 2 || speed === 4 || speed === 8 || speed === 96 ? speed : null;
+}
+
+export function yearsFromText(text: string): number | null {
+  const match = text.match(/\b(?:show|advance|jump|after)\s+(\d+(?:\.\d+)?)\s*(million|thousand|k)?\s+years?\b/i);
+  if (!match) return null;
+  const number = Number(match[1]);
+  const scale = match[2]?.toLowerCase();
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(1_000_000_000, Math.round(number * (scale === "million" ? 1_000_000 : scale === "thousand" || scale === "k" ? 1_000 : 1)));
+}
+
 export function priorityBuildings(directive: Directive): BuildingId[] {
   if (directive === "food") return ["fishery", "farm", "orchard", "lumber"];
   if (directive === "growth") return ["hut", "farm", "fishery", "lumber"];

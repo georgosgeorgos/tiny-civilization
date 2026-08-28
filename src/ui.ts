@@ -16,8 +16,12 @@ export type CivHudState = {
   tradeRoutes: number;
   housing: number;
   technology: number;
+  evolution: string;
+  capacity: number;
   health: number;
   land: number;
+  culture: string;
+  scenario?: "planet" | "spacecraft";
 };
 
 /** Keeps presentation concerns out of the simulation loop. */
@@ -34,8 +38,10 @@ export class Hud {
   private readonly towns = document.querySelector<HTMLElement>("#stat-isles");
   private readonly trade = document.querySelector<HTMLElement>("#stat-trade");
   private readonly technology = document.querySelector<HTMLElement>("#stat-tech");
+  private readonly evolution = document.querySelector<HTMLElement>("#stat-evolution");
   private readonly health = document.querySelector<HTMLElement>("#stat-health");
   private readonly land = document.querySelector<HTMLElement>("#stat-land");
+  private readonly culture = document.querySelector<HTMLElement>("#stat-culture");
 
   setHint(text: string): void {
     if (this.hint) this.hint.textContent = text;
@@ -45,9 +51,10 @@ export class Hud {
     if (this.turn) this.turn.textContent = `Year ${state.year} · ${state.season} · ${state.era}`;
     if (this.goal) this.goal.textContent = state.goal;
     if (this.clock) this.clock.textContent = `${state.clock} · ${state.sky} · Day ${state.day}`;
-    this.setResource(this.gold, "Gold", state.gold, Math.min(100, state.gold / 1.4));
-    this.setResource(this.food, "Food", state.food, Math.min(100, state.food / Math.max(1, state.people * 3) * 100));
-    this.setResource(this.wood, "Wood", state.wood, Math.min(100, state.wood / 0.9));
+    const spacecraft = state.scenario === "spacecraft";
+    this.setResource(this.gold, spacecraft ? "Research" : "Gold", state.gold, Math.min(100, state.gold / 1.4));
+    this.setResource(this.food, spacecraft ? "Nutrients" : "Food", state.food, Math.min(100, state.food / Math.max(1, state.people * 3) * 100));
+    this.setResource(this.wood, spacecraft ? "Materials" : "Wood", state.wood, Math.min(100, state.wood / 0.9));
     this.setResource(this.mood, "Mood", state.mood, state.mood);
     if (this.people) {
       const residents = state.others > 0 ? `${state.people} · ${state.others} abroad` : String(state.people);
@@ -57,8 +64,10 @@ export class Hud {
     if (this.towns) this.towns.textContent = `Towns ${state.towns}`;
     if (this.trade) this.trade.textContent = `Routes ${state.tradeRoutes}`;
     if (this.technology) this.technology.textContent = `Tech ${state.technology}`;
+    if (this.evolution) this.evolution.textContent = `${state.evolution} · cap ${state.capacity}`;
+    if (this.culture) this.culture.textContent = state.culture;
     this.setResource(this.health, "Health", state.health, state.health);
-    this.setResource(this.land, "Land", state.land, state.land);
+    this.setResource(this.land, spacecraft ? "Hull" : "Land", state.land, state.land);
   }
 
   private setResource(element: HTMLElement | null, label: string, value: number, level: number): void {

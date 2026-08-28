@@ -1,0 +1,94 @@
+import type { CellularMetrics } from "./cellular.ts";
+import { SeededRandom } from "./random.ts";
+import type { CulturalState, CultureTraits, Ecology, SimulationInputs, Stores } from "./types.ts";
+
+const traitNames: (keyof CultureTraits)[] = ["cooperation", "curiosity", "mobility", "stewardship", "resilience"];
+const clamp = (value: number) => Math.max(0, Math.min(1, value));
+
+export type CultureContext = {
+  elapsedDays: number;
+  ecology: Ecology;
+  landscape: CellularMetrics;
+  stores: Stores;
+  health: number;
+  stability: number;
+  inputs: SimulationInputs;
+};
+
+export function createCulture(seed: number): CulturalState {
+  const random = new SeededRandom(seed ^ 0x1f123bb5);
+  const first = ["Aru", "Bel", "Cai", "Dara", "Esh", "Ilo", "Keth", "Mara", "Nai", "Oru", "Seli", "Tavi"];
+  const second = ["an", "en", "esh", "in", "or", "ra", "un", "yth"];
+  const family = `${first[Math.floor(random.next() * first.length)]}${second[Math.floor(random.next() * second.length)]}`;
+  const syllables = ["ka", "mi", "ru", "sa", "tel", "vo", "ya", "zen"];
+  return {
+    lineage: family,
+    generation: 0,
+    traits: {
+      cooperation: 0.34 + random.next() * 0.34,
+      curiosity: 0.28 + random.next() * 0.4,
+      mobility: 0.24 + random.next() * 0.42,
+      stewardship: 0.3 + random.next() * 0.38,
+      resilience: 0.35 + random.next() * 0.36,
+    },
+    practices: [],
+    novelty: 0,
+    language: {
+      family,
+      dialect: `${family}-${syllables[Math.floor(random.next() * syllables.length)]}`,
+      lexicon: ["home", "water", "kin"].map((word, index) => `${word}-${syllables[(index + Math.floor(random.next() * syllables.length)) % syllables.length]}`),
+      boundary: 0.28 + random.next() * 0.35,
+    },
+  };
+}
+
+/**
+ * Cultural traits are inherited tendencies, not a command queue. Ecology and
+ * social outcomes bias which tendencies survive; periodic small mutations
+ * preserve divergence between otherwise similar settlements.
+ */
+export function evolveCulture(current: CulturalState, context: CultureContext, random: SeededRandom, elapsedYears: number): CulturalState {
+  const traits = { ...current.traits };
+  const span = Math.max(1 / 96, Math.min(80, elapsedYears));
+  const adaptation = 1 - Math.exp(-span * 0.22);
+  const foodSecurity = clamp(context.stores.food / Math.max(2, context.inputs.population * 2.5));
+  const scarcity = 1 - foodSecurity;
+  const disruption = context.inputs.disruption === "none" ? 0 : context.inputs.disruption === "storm" ? 0.28 : 0.6;
+  const influence = context.inputs.culturalInfluence ?? {};
+  const targets: CultureTraits = {
+    cooperation: clamp(0.22 + context.stability * 0.42 + scarcity * 0.25 + (influence.cooperation ?? traits.cooperation) * 0.11),
+    curiosity: clamp(0.16 + Math.min(1, context.inputs.buildings.market * 0.18 + context.inputs.buildings.shrine * 0.1 + context.inputs.infrastructure.tradeRoutes * 0.18) + (influence.curiosity ?? traits.curiosity) * 0.14),
+    mobility: clamp(0.12 + context.inputs.infrastructure.ports * 0.19 + context.inputs.infrastructure.tradeRoutes * 0.2 + context.inputs.moodPressure * -0.08 + scarcity * 0.28 + (influence.mobility ?? traits.mobility) * 0.1),
+    stewardship: clamp(0.18 + (1 - context.ecology.soil) * 0.35 + (1 - context.ecology.forest) * 0.2 + context.landscape.settlementFootprint * 0.16 + (influence.stewardship ?? traits.stewardship) * 0.12),
+    resilience: clamp(0.22 + disruption * 0.45 + scarcity * 0.25 + (1 - context.health) * 0.18 + context.ecology.disease * 0.18 + (influence.resilience ?? traits.resilience) * 0.1),
+  };
+  for (const trait of traitNames) traits[trait] = clamp(traits[trait] + (targets[trait] - traits[trait]) * adaptation);
+
+  const generation = Math.floor(context.elapsedDays / 12);
+  const mutationCycles = Math.min(32, Math.max(0, generation - current.generation));
+  for (let cycle = 0; cycle < mutationCycles; cycle += 1) {
+    const trait = traitNames[Math.floor(random.next() * traitNames.length)] ?? "cooperation";
+    traits[trait] = clamp(traits[trait] + (random.next() - 0.5) * 0.075);
+  }
+
+  const practices = new Set(current.practices);
+  const institutionCount = context.inputs.buildings.market + context.inputs.buildings.shrine + context.inputs.buildings.forge;
+  if (traits.stewardship > 0.54 && context.ecology.soil < 0.7) practices.add("soil-rest covenant");
+  if (traits.cooperation > 0.56 && scarcity > 0.25) practices.add("common granary");
+  if (traits.mobility > 0.58 && context.inputs.infrastructure.ports + context.inputs.infrastructure.tradeRoutes > 0) practices.add("wayfinding compact");
+  if (traits.curiosity > 0.6 && institutionCount >= 2) practices.add("open archive");
+  if (traits.resilience > 0.62 && disruption > 0.2) practices.add("storm ledger");
+  if (traits.cooperation > 0.62 && traits.curiosity > 0.58 && context.landscape.habitatDiversity > 0.48) practices.add("living commons");
+  const retained = [...practices].sort().slice(-6);
+  const language = structuredClone(current.language);
+  // Contact softens boundaries; disruption makes identity more protective.
+  language.boundary = clamp(language.boundary + (disruption * 0.18 + scarcity * 0.08 - context.inputs.infrastructure.tradeRoutes * 0.06) * adaptation);
+  if (mutationCycles > 0) {
+    const fragments = ["ka", "mi", "ru", "sa", "tel", "vo", "ya", "zen"];
+    const fragment = fragments[Math.floor(random.next() * fragments.length)] ?? "ka";
+    language.dialect = `${language.family}-${fragment}${generation}`;
+    language.lexicon = [...new Set([...language.lexicon, `memory-${fragment}`])].slice(-8);
+  }
+  const novelty = retained.length * 0.12 + traitNames.reduce((sum, trait) => sum + Math.abs(traits[trait] - 0.5), 0) * 0.08;
+  return { lineage: current.lineage, generation, traits, practices: retained, novelty, language };
+}

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "node --experimental-strip-types src/simulation/engine.test.ts",
+    "research": "node --experimental-strip-types src/simulation/research-runner.ts",
     "preview": "vite preview"
   },
   "dependencies": {

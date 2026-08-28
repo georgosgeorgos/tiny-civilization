@@ -762,7 +762,54 @@ function makeHarborBuilding(id: BuildingId): THREE.Group {
   return makeMetroBuilding(id);
 }
 
+/** Orbital equivalents preserve the economy while giving each function a distinct habitat module. */
+function makeOrbitalBuilding(id: BuildingId): THREE.Group {
+  const group = new THREE.Group();
+  const shell = new THREE.MeshStandardMaterial({ color: 0xd3dae1, roughness: 0.34, metalness: 0.72 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0x293847, roughness: 0.38, metalness: 0.9 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x66d6d3, emissive: 0x16787a, emissiveIntensity: 0.85, roughness: 0.14, metalness: 0.35 });
+  const green = new THREE.MeshStandardMaterial({ color: 0x6dbf7a, emissive: 0x174d35, emissiveIntensity: 0.35, roughness: 0.65 });
+  const amber = new THREE.MeshStandardMaterial({ color: 0xffb55d, emissive: 0xca4a10, emissiveIntensity: 0.9, roughness: 0.35, metalness: 0.25 });
+  const base = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.08, 10), trim));
+  base.position.y = 0.04;
+  const module = shadow(new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.26, 5, 10), shell));
+  module.position.y = 0.27;
+  module.rotation.z = Math.PI / 2;
+  group.add(base, module);
+
+  if (id === "hut") {
+    const port = shadow(new THREE.Mesh(new THREE.CircleGeometry(0.09, 10), glass));
+    port.position.set(0.18, 0.29, 0.205);
+    group.add(port);
+  } else if (id === "farm" || id === "orchard") {
+    const greenhouse = shadow(new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), glass));
+    greenhouse.position.set(-0.08, 0.22, 0);
+    const bed = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.06, 0.25), green));
+    bed.position.set(0.1, 0.12, 0);
+    group.add(greenhouse, bed);
+  } else if (id === "mine" || id === "forge" || id === "lumber") {
+    const reactor = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.3, 10), trim));
+    reactor.position.set(-0.06, 0.25, 0);
+    const core = shadow(new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), amber));
+    core.position.set(-0.06, 0.25, 0.11);
+    group.add(reactor, core);
+  } else if (id === "fishery") {
+    const tank = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.28, 12), glass));
+    tank.position.set(0.04, 0.21, 0);
+    group.add(tank);
+  } else {
+    const antenna = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.45, 6), trim));
+    antenna.position.set(0.04, 0.52, 0);
+    const signal = shadow(new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), glass));
+    signal.position.y = 0.76;
+    signal.userData.nightLight = true;
+    group.add(antenna, signal);
+  }
+  return group;
+}
+
 export function makeBuilding(id: BuildingId, style: ArchStyle = "rustic"): THREE.Group {
+  if (style === "orbital") return makeOrbitalBuilding(id);
   if (style === "metro") return makeMetroBuilding(id);
   if (style === "harbor") return makeHarborBuilding(id);
   if (id === "hut" && style === "adobe") return makeAdobeHouse();
