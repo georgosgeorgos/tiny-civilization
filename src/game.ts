@@ -2214,7 +2214,10 @@ export class Game {
         const key = this.regionalRelationKey(left.islandId, right.islandId);
         const [leftQ, leftR] = left.islandId.split(",").map(Number);
         const [rightQ, rightR] = right.islandId.split(",").map(Number);
-        const distance = hexDistance(leftQ - rightQ, leftR - rightR);
+        const geometricDistance = hexDistance(leftQ - rightQ, leftR - rightR);
+        // The same terrain burden that weakens exchange also lengthens the
+        // social journey needed to establish a relationship.
+        const distance = geometricDistance * ((this.regionalTerrainCost(left.islandId) + this.regionalTerrainCost(right.islandId)) / 2);
         const affinity = left.culture.language.family === right.culture.language.family
           ? 0.9
           : Math.max(0.1, 1 - Math.abs(left.culture.language.boundary - right.culture.language.boundary) * 0.62);
