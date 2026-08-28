@@ -14,6 +14,7 @@ import { evolveInnovations, innovationEffects } from "./innovation.ts";
 import { settleShipment } from "./market.ts";
 import { resolveConflict } from "./conflict.ts";
 import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage } from "./diplomacy.ts";
+import { advanceRegionalRelation, createRegionalRelation, regionalRelationMode } from "./interregional.ts";
 import { makeBuilding } from "../models.ts";
 import type { SimulationInputs } from "./types.ts";
 
@@ -97,11 +98,28 @@ const pactOffer = dispatchMessage(envoyArrival.channel, "trade-proposal", 12, { 
 const pactArrival = advanceDiplomaticChannel(pactOffer, 14, { infrastructure: 0.75, languageAffinity: 0.9, scarcity: 0.1 });
 assert.ok(channelSupportsTrade(pactArrival.channel), "well-supported, legible diplomacy should mature from parley into a trade pact");
 
+const regionalContext = { distance: 12, languageAffinity: 0.9, infrastructure: 0.9, scarcityA: 0.12, scarcityB: 0.2, borderFriction: 0.05 };
+const regionalOrigin = createRegionalRelation(1, regionalContext);
+const regionalParley = advanceRegionalRelation(regionalOrigin, 4, regionalContext);
+const regionalTrade = advanceRegionalRelation(regionalParley, 16, regionalContext);
+assert.equal(regionalRelationMode(regionalParley), "parley", "nearby autonomous societies should establish direct contact without routing through the player");
+assert.equal(regionalRelationMode(regionalTrade), "trade", "reliable autonomous contact should mature into its own trade relation");
+
 const noRoute = exchangeRegions([
   { id: "a", q: 0, r: 0, population: 5, capacity: 8, food: 30, wood: 4, gold: 3, knowledge: 18, stability: 0.7, migrationPressure: 0.1, markets: 2, ports: 1, institutions: 2 },
   { id: "b", q: 2, r: 0, population: 7, capacity: 12, food: 2, wood: 4, gold: 3, knowledge: 1, stability: 0.4, migrationPressure: 0.8, markets: 2, ports: 1, institutions: 2 },
 ], 1, () => "none");
 assert.equal(noRoute.get("a")?.knowledge, 0, "isolated regions must not receive invisible network effects");
+
+const relay = exchangeRegions([
+  { id: "source", q: 0, r: 0, population: 10, capacity: 14, food: 50, wood: 4, gold: 3, knowledge: 100, stability: 0.7, migrationPressure: 0.1, markets: 3, ports: 1, institutions: 2 },
+  { id: "crossroads", q: 4, r: 0, population: 7, capacity: 14, food: 2, wood: 4, gold: 3, knowledge: 4, stability: 0.7, migrationPressure: 0.1, markets: 3, ports: 1, institutions: 2 },
+  { id: "frontier", q: 8, r: 0, population: 7, capacity: 12, food: 1, wood: 4, gold: 3, knowledge: 1, stability: 0.7, migrationPressure: 0.1, markets: 3, ports: 1, institutions: 2 },
+], 1, (from, to) => {
+  const pair = [from.id, to.id].sort().join(":");
+  return pair === "frontier:source" ? "none" : "trade";
+});
+assert.ok((relay.get("frontier")?.food ?? 0) > 0, "a connected crossroads should relay a decayed share of received food beyond its direct source");
 
 const first = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });
 const second = new SimulationEngine(42, { food: 12, wood: 8, gold: 10 });

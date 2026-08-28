@@ -64,6 +64,7 @@ import { HouseholdSystem, type HouseholdMetrics } from "./simulation/households.
 import { settleShipment } from "./simulation/market.ts";
 import { resolveConflict } from "./simulation/conflict.ts";
 import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
+import { advanceRegionalRelation, createRegionalRelation, regionalRelationMode, type RegionalRelation } from "./simulation/interregional.ts";
 import { TerrainChunks } from "./terrain-chunks";
 import { WorldState } from "./world-state";
 import type { TerritorialClaim } from "./world-state";
@@ -244,6 +245,7 @@ export class Game {
   private readonly tradeRoutes = new Map<string, TradeRoute>();
   private readonly communicationGroup = new THREE.Group();
   private readonly communicationLinks = new Map<string, CommunicationLink>();
+  private readonly regionalRelations = new Map<string, RegionalRelation>();
   private readonly activityLog: string[] = [];
   private readonly water: WaterSystem;
   private readonly clouds: THREE.Group;
@@ -1999,6 +2001,9 @@ export class Game {
       this.persistTile(tile);
     }
     this.societies.delete(society.islandId);
+    for (const key of this.regionalRelations.keys()) {
+      if (key.split("|").includes(society.islandId)) this.regionalRelations.delete(key);
+    }
     this.founded.delete(society.islandId);
     this.renewalUntil.set(society.islandId, this.simDays + 18);
     this.fragmentationCooldown.delete(society.islandId);
@@ -2129,11 +2134,53 @@ export class Game {
         }
       }
     }
+    this.advanceAutonomousRelations(year);
+  }
+
+  /** Neighboring societies build their own histories; player diplomacy is not
+   * a hidden hub that determines every interregional relationship. */
+  private advanceAutonomousRelations(year: number): void {
+    const societies = [...this.societies.values()];
+    for (let a = 0; a < societies.length; a += 1) {
+      const left = societies[a];
+      if (!left) continue;
+      for (let b = a + 1; b < societies.length; b += 1) {
+        const right = societies[b];
+        if (!right) continue;
+        const key = this.regionalRelationKey(left.islandId, right.islandId);
+        const [leftQ, leftR] = left.islandId.split(",").map(Number);
+        const [rightQ, rightR] = right.islandId.split(",").map(Number);
+        const distance = hexDistance(leftQ - rightQ, leftR - rightR);
+        const affinity = left.culture.language.family === right.culture.language.family
+          ? 0.9
+          : Math.max(0.1, 1 - Math.abs(left.culture.language.boundary - right.culture.language.boundary) * 0.62);
+        const leftPeople = this.people.filter((person) => person.tribe && person.islandId === left.islandId).length;
+        const rightPeople = this.people.filter((person) => person.tribe && person.islandId === right.islandId).length;
+        const context = {
+          distance,
+          languageAffinity: affinity,
+          infrastructure: Math.min(1, (this.findPort("tribe", left.islandId) ? 0.42 : 0.05) + (this.findPort("tribe", right.islandId) ? 0.42 : 0.05)),
+          scarcityA: Math.max(0, 1 - left.food / Math.max(3, leftPeople * 2.5)),
+          scarcityB: Math.max(0, 1 - right.food / Math.max(3, rightPeople * 2.5)),
+          borderFriction: (distance < 28 ? 0.3 : distance < 54 ? 0.12 : 0) + (left.kind === right.kind ? 0.11 : 0),
+        };
+        const previous = this.regionalRelations.get(key) ?? createRegionalRelation(year, context);
+        const next = advanceRegionalRelation(previous, year, context);
+        this.regionalRelations.set(key, next);
+        if (next.stance !== previous.stance && next.stance !== "none") {
+          const action = next.stance === "trade" ? "open a direct trade corridor" : next.stance === "parley" ? "begin a cautious direct parley" : "close their border in hostility";
+          this.setHint(`${left.name} and ${right.name} ${action}.`);
+        }
+      }
+    }
+  }
+
+  private regionalRelationKey(left: string, right: string): string {
+    return left < right ? `${left}|${right}` : `${right}|${left}`;
   }
 
   /** Every modeled regional exchange must have an established social channel.
-   * Two neighbors who both maintain a pact with the player can also exchange
-   * through that shared corridor; a parley moves ideas, a pact moves goods. */
+   * Player pacts and autonomous regional relationships use the same modes. */
   private networkConnection(from: NetworkRegion, to: NetworkRegion): NetworkConnection {
     const fromSociety = from.id === "player" ? null : this.societies.get(from.id);
     const toSociety = to.id === "player" ? null : this.societies.get(to.id);
@@ -2143,8 +2190,8 @@ export class Game {
       if (!channel) return "none";
       return channelSupportsTrade(channel) ? "trade" : channelSupportsContact(channel) ? "parley" : "none";
     }
-    if (!channelSupportsContact(fromSociety.diplomacy) || !channelSupportsContact(toSociety.diplomacy)) return "none";
-    return channelSupportsTrade(fromSociety.diplomacy) && channelSupportsTrade(toSociety.diplomacy) ? "trade" : "parley";
+    const relation = this.regionalRelations.get(this.regionalRelationKey(fromSociety.islandId, toSociety.islandId));
+    return relation ? regionalRelationMode(relation) : "none";
   }
 
   private resolveRegionalConflicts(): void {
@@ -2771,6 +2818,45 @@ export class Game {
       this.communicationGroup.add(line, pulse);
       this.communicationLinks.set(key, { source: from, destination: to, line, pulse, mode });
       this.setHint(`${mode === "trade" ? "A trade corridor" : "A cautious signal corridor"} opens with ${this.societies.get(region.id)?.name ?? "a neighboring region"}. ${mode === "trade" ? "Goods, people, and knowledge" : "Ideas and customs"} can now travel visibly.`);
+    }
+    // Autonomous societies can communicate with one another even when the
+    // observer's civilization has never met either party. These paths expose
+    // the simulation's distributed diplomatic history rather than a hub.
+    const autonomous = regions.filter((region) => region.id !== "player");
+    for (let index = 0; index < autonomous.length; index += 1) {
+      const left = autonomous[index];
+      if (!left) continue;
+      for (let peer = index + 1; peer < autonomous.length; peer += 1) {
+        const right = autonomous[peer];
+        if (!right) continue;
+        const relation = this.regionalRelations.get(this.regionalRelationKey(left.id, right.id));
+        const mode = relation ? regionalRelationMode(relation) : "none";
+        if (mode === "none" || left.population <= 0 || right.population <= 0) continue;
+        const key = `regional:${this.regionalRelationKey(left.id, right.id)}`;
+        wanted.add(key);
+        const existing = this.communicationLinks.get(key);
+        if (existing?.mode === mode) continue;
+        if (existing) {
+          this.communicationGroup.remove(existing.line, existing.pulse);
+          existing.line.geometry.dispose();
+          (existing.line.material as THREE.Material).dispose();
+          existing.pulse.geometry.dispose();
+          (existing.pulse.material as THREE.Material).dispose();
+          this.communicationLinks.delete(key);
+        }
+        const from = this.regionPoint(left.id);
+        const to = this.regionPoint(right.id);
+        if (!from || !to) continue;
+        const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
+        const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: mode === "trade" ? 0xffd878 : 0x8ff0c8, dashSize: mode === "trade" ? 1.05 : 0.5, gapSize: mode === "trade" ? 0.65 : 1.1, transparent: true, opacity: mode === "trade" ? 0.66 : 0.42 }));
+        line.computeLineDistances();
+        const pulse = new THREE.Mesh(
+          new THREE.SphereGeometry(0.2, 10, 8),
+          new THREE.MeshStandardMaterial({ color: mode === "trade" ? 0xfff1bd : 0xd0ffea, emissive: mode === "trade" ? 0xde8e1f : 0x25bd83, emissiveIntensity: mode === "trade" ? 1.8 : 1.1, roughness: 0.2 }),
+        );
+        this.communicationGroup.add(line, pulse);
+        this.communicationLinks.set(key, { source: from, destination: to, line, pulse, mode });
+      }
     }
     for (const [key, link] of this.communicationLinks) {
       if (wanted.has(key)) continue;

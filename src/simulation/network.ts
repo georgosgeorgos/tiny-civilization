@@ -36,6 +36,7 @@ export function exchangeRegions(
   connection: (from: NetworkRegion, to: NetworkRegion) => NetworkConnection = () => "trade",
 ): ReadonlyMap<string, NetworkEffect> {
   const effects = new Map<string, NetworkEffect>(regions.map((region) => [region.id, blank()]));
+  const tradePeers = new Map<string, NetworkRegion[]>(regions.map((region) => [region.id, []]));
   const span = Math.max(0, Math.min(1, years * 4));
   for (let a = 0; a < regions.length; a += 1) {
     const from = regions[a];
@@ -52,6 +53,10 @@ export function exchangeRegions(
         (from.markets + to.markets) * 0.18 + (from.ports + to.ports) * 0.16 + (from.institutions + to.institutions) * 0.045,
       );
       if (readiness < 0.08) continue;
+      if (mode === "trade") {
+        tradePeers.get(from.id)?.push(to);
+        tradePeers.get(to.id)?.push(from);
+      }
       const fromLanguage = from.language;
       const toLanguage = to.language;
       const linguisticAffinity = !fromLanguage || !toLanguage
@@ -103,6 +108,32 @@ export function exchangeRegions(
         originEffect.gold += migrants * 0.08;
         destinationEffect.gold -= migrants * 0.08;
       }
+    }
+  }
+  // A trade graph should have consequences beyond isolated pairs. A single,
+  // non-recursive relay pass lets a crossroads forward part of what it just
+  // received. Reading from the frozen direct receipts keeps this bounded to
+  // two hops: it is neither instant global diffusion nor update-order magic.
+  const directReceipts = new Map([...effects].map(([id, effect]) => [id, { food: effect.food, knowledge: effect.knowledge }]));
+  for (const intermediary of regions) {
+    const peers = tradePeers.get(intermediary.id) ?? [];
+    if (peers.length < 2) continue;
+    const received = directReceipts.get(intermediary.id);
+    const intermediaryEffect = effects.get(intermediary.id);
+    if (!received || !intermediaryEffect) continue;
+    const hungryPeers = peers.filter((peer) => peer.food < peer.population * 2.3);
+    const foodToRelay = Math.min(Math.max(0, received.food) * 0.3, Math.max(0, intermediaryEffect.food));
+    if (foodToRelay > 0 && hungryPeers.length > 0) {
+      const share = foodToRelay / hungryPeers.length;
+      intermediaryEffect.food -= foodToRelay;
+      for (const peer of hungryPeers) (effects.get(peer.id) as NetworkEffect).food += share;
+    }
+    const lessLearnedPeers = peers.filter((peer) => peer.knowledge < intermediary.knowledge);
+    const knowledgeToRelay = Math.min(Math.max(0, received.knowledge) * 0.3, Math.max(0, intermediaryEffect.knowledge));
+    if (knowledgeToRelay > 0 && lessLearnedPeers.length > 0) {
+      const share = knowledgeToRelay / lessLearnedPeers.length;
+      intermediaryEffect.knowledge -= knowledgeToRelay;
+      for (const peer of lessLearnedPeers) (effects.get(peer.id) as NetworkEffect).knowledge += share;
     }
   }
   return effects;
