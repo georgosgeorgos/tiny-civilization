@@ -35,6 +35,7 @@ export function chooseNextBuilding(
   snap: CivSnapshot,
   canBuild: (id: BuildingId) => boolean,
   directive: Directive = "balanced",
+  mineralStock = 1,
 ): BuildingId | null {
   const { food, gold, wood, mood, people, housing, counts } = snap;
   // Land, workforce, and stores are the natural limits—not an arbitrary building cap.
@@ -71,7 +72,7 @@ export function chooseNextBuilding(
     if (id) return id;
   }
   if (gold < 14) {
-    const id = pick(["lumber", "market", "mine", "fishery"]);
+    const id = pick(mineralStock < 0.35 ? ["lumber", "market", "fishery"] : ["lumber", "market", "mine", "fishery"]);
     if (id) return id;
   }
   if (mood < 40) {
@@ -99,10 +100,10 @@ export function chooseNextBuilding(
     if (id) return id;
   }
   if (people >= 10 && counts.forge === 0) {
-    const id = pick(["forge", "mine"]);
+    const id = pick(mineralStock < 0.35 ? ["forge", "market"] : ["forge", "mine"]);
     if (id) return id;
   }
-  if (counts.mine === 0) {
+  if (counts.mine === 0 && mineralStock >= 0.35) {
     const id = pick(["mine", "forge"]);
     if (id) return id;
   }

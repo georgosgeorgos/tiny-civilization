@@ -120,7 +120,8 @@ export class CellularEcology {
           0.024 * suitability + 0.065 * (neighbours.water - this.water[i]) + coast * 0.028 + stewardship * 0.006 -
           farmPressure * (0.16 + suitability * 0.18) + rainfall * 0.025 - drought * 0.18 - localSettlement * 0.011
         ));
-        mineralsNext[i] = clamp(this.minerals[i] + dt * (0.0025 * suitability + 0.005 * (neighbours.minerals - this.minerals[i]) - minePressure * (0.45 + suitability * 0.3)));
+        const mineralRecovery = use !== LAND_USE.mine ? 0.0001 : 0;
+        mineralsNext[i] = clamp(this.minerals[i] + dt * (0.0025 * suitability + mineralRecovery + 0.005 * (neighbours.minerals - this.minerals[i]) - minePressure * (0.45 + suitability * 0.3)));
         diseaseNext[i] = clamp(this.disease[i] + dt * (
           localSettlement * (0.035 + (1 - this.water[i]) * 0.05) + flood * 0.035 -
           this.disease[i] * (0.06 + cooperation * 0.025 + resilience * 0.018)

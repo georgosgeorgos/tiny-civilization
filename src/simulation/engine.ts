@@ -90,7 +90,7 @@ export class SimulationEngine {
     const foodNeed = inputs.population * 1.5;
     const crisisRules = this.crisisRules();
     const foodProduction = inputs.annualProduction.food * institutionRules.labor * innovationRules.food * crisisRules.food * this.state.ecology.soil * (0.36 + this.state.ecology.water * 0.28 + this.state.cropHealth * 0.2 + climate.rainfall * 0.16);
-    const spoilage = this.state.stores.food * 0.018 * (1 - infrastructure * 0.48) * (1 - institutionRules.spoilageProtection);
+    const spoilage = this.state.stores.food * 0.022 * (1 - infrastructure * 0.48) * (1 - institutionRules.spoilageProtection);
     const maintenance = this.totalBuildings(inputs.buildings) * 0.08 * (1 - infrastructure * 0.16);
     const annualFlow = {
       food: foodProduction - foodNeed - spoilage,
@@ -141,7 +141,7 @@ export class SimulationEngine {
     const innovationRules = innovationEffects(this.state.innovations);
     const crisisRules = this.crisisRules();
     // Better-connected settlements move and preserve staples more reliably, without tracking every cart.
-    const spoilage = this.state.stores.food * 0.018 * yearPart * (1 - infrastructure * 0.48) * (1 - institutionRules.spoilageProtection);
+    const spoilage = this.state.stores.food * 0.022 * yearPart * (1 - infrastructure * 0.48) * (1 - institutionRules.spoilageProtection);
     const maintenance = this.totalBuildings(inputs.buildings) * 0.08 * yearPart * (1 - infrastructure * 0.16);
     const cropTarget = clamp01(
       0.58 + this.state.ecology.soil * 0.25 + climate.rainfall * 0.28 - (inputs.disruption === "drought" ? 0.38 : 0) - (inputs.disruption === "flood" ? 0.16 : 0),
@@ -180,6 +180,7 @@ export class SimulationEngine {
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
     this.state.knowledge += (inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge * yearPart * (0.65 + this.state.stability * 0.5);
     this.updateCulture(inputs, yearPart);
+    this.releaseFamineBuffer(inputs.population);
     this.updateInstitutions(inputs, yearPart);
     this.updateInnovations(inputs);
     this.updateEvolution(inputs);
@@ -291,6 +292,16 @@ export class SimulationEngine {
     this.state.culture = { ...this.state.culture, practices: [...new Set([...this.state.culture.practices, outcome])].sort() };
     if (outcome === "civic reform" || outcome === "soil covenant" || outcome === "redundant loop") this.state.stability = clamp01(this.state.stability + 0.08);
     if (outcome === "fortified quarters" || outcome === "emergency rationing") this.state.stability = clamp01(this.state.stability - 0.06);
+  }
+
+  private releaseFamineBuffer(population: number): void {
+    if (this.state.stores.food >= population * 2.0) return;
+    if (!this.state.institutions.forms.includes("commons")) return;
+    if (this.state.institutions.commonReserve <= 0.5) return;
+    const deficit = population * 2.0 - this.state.stores.food;
+    const release = Math.min(this.state.institutions.commonReserve * 0.6, deficit);
+    this.state.stores.food += release;
+    this.state.institutions.commonReserve -= release;
   }
 
   private totalBuildings(buildings: Record<BuildingId, number>): number {

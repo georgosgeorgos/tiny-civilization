@@ -2170,7 +2170,7 @@ export class Game {
     if (this.hasPlayerConstruction()) return;
     const snap = this.civSnapshot();
     const localDirective = this.directive === "balanced" ? this.directiveForCulture(this.simulation.snapshot.culture.traits) : this.directive;
-    const id = chooseNextBuilding(snap, (building) => this.canUseBuilding(building, snap) && this.canSite(building), localDirective);
+    const id = chooseNextBuilding(snap, (building) => this.canUseBuilding(building, snap) && this.canSite(building), localDirective, this.simulation.snapshot.ecology.minerals);
     if (!id) return;
     const site = this.findSite(id);
     if (!site) return;
@@ -2432,9 +2432,11 @@ export class Game {
       // speed. Overcast is deliberately separate from rain, so a lively sky
       // does not imply permanent precipitation.
       const seasonWetness = this.visualSeason === "Spring" ? 0.08 : this.visualSeason === "Autumn" ? 0.05 : this.visualSeason === "Winter" ? 0.035 : 0;
-      const clearCutoff = 0.48 - seasonWetness;
-      const overcastCutoff = 0.84 - seasonWetness * 0.45;
-      const rainCutoff = 0.97 - seasonWetness * 0.2;
+      const climateRegime = this.simulation.snapshot.climate.regime;
+      const dryBias = climateRegime === "dry-cold" ? 0.22 : climateRegime === "dry" ? 0.18 : climateRegime === "wet" ? -0.12 : 0;
+      const clearCutoff = 0.48 - seasonWetness + dryBias;
+      const overcastCutoff = 0.84 - seasonWetness * 0.45 + dryBias * 0.5;
+      const rainCutoff = 0.97 - seasonWetness * 0.2 + dryBias * 0.3;
       const next: Weather = roll < clearCutoff ? "clear" : roll < overcastCutoff ? "overcast" : roll < rainCutoff ? "rain" : "storm";
       const duration = next === "clear" ? 0.62 + roll * 0.72 : next === "overcast" ? 0.42 + roll * 0.46 : next === "rain" ? 0.16 + roll * 0.15 : 0.09 + roll * 0.11;
       this.weatherUntil = this.weatherDays + duration * this.weatherPace;
@@ -2444,7 +2446,10 @@ export class Game {
       } else {
         this.weather = next;
       }
-      if (roll > 0.92 && this.event === "none") {
+      const droughtThreshold = (climateRegime === "dry" || climateRegime === "dry-cold") ? 0.84 : 0.92;
+      const floodLower = climateRegime === "wet" ? 0.60 : 0.66;
+      const floodUpper = climateRegime === "wet" ? 0.72 : 0.72;
+      if (roll > droughtThreshold && this.event === "none") {
         this.event = "drought";
         this.eventUntil = this.simDays + 0.9;
         this.setHint("Drought. The soil cracks and farms slow.");
@@ -2465,11 +2470,11 @@ export class Game {
         this.eventUntil = this.simDays + 0.45;
         this.migrationResolved = false;
         this.setHint("Migrants arrive, looking for safe homes and full stores.");
-      } else if (roll > 0.66 && roll < 0.72 && this.event === "none") {
+      } else if (roll > floodLower && roll < floodUpper && this.event === "none") {
         this.event = "flood";
         this.eventUntil = this.simDays + 0.55;
         this.setHint("Coastal floods sweep in. Fisheries surge while fields struggle.");
-      } else if (roll > 0.60 && roll < 0.66 && this.event === "none") {
+      } else if (roll > 0.60 && roll < floodLower && this.event === "none") {
         this.event = "wildfire";
         this.eventUntil = this.simDays + 0.42;
         this.setHint("Wildfire runs through the wildlands. Lumber slows and spirits fall.");
@@ -2520,7 +2525,11 @@ export class Game {
         if (this.event === "ash" && (tile.building === "mine" || tile.building === "forge")) goldMul *= 1.55;
         if (this.event === "trade" && tile.building === "market") goldMul *= 1.7;
         goldGain = def.goldPerYear * goldMul * work;
-        if (tile.building === "mine") goldGain *= tile.terrain === "mountain" ? 1.45 : tile.terrain === "hill" ? 1.18 : 1;
+        if (tile.building === "mine") {
+          goldGain *= tile.terrain === "mountain" ? 1.45 : tile.terrain === "hill" ? 1.18 : 1;
+          const mineralStock = this.simulation.snapshot.ecology.minerals;
+          goldGain *= Math.max(0.18, Math.sqrt(mineralStock));
+        }
         if (tile.building === "forge") goldGain *= tile.terrain === "mountain" ? 1.2 : 1;
       }
       if (def.woodPerYear) {
@@ -2664,7 +2673,7 @@ export class Game {
           annualProduction: annual,
           buildings: counts,
           moodPressure: (tribeHappiness - 50) / 50 - (householdSignals.get(society.islandId)?.migrationPressure ?? 0) * 0.1,
-          infrastructure: { roads: 0, ports: 0, tradeRoutes: 0 },
+          infrastructure: this.tribeInfrastructure(society.islandId),
           disruption,
           fidelity: "remote",
           culturalInfluence: society.culturalInfluence,
@@ -2807,6 +2816,18 @@ export class Game {
     }
     const roads = [...this.roadEdges.values()].filter((road) => road.userData.owner === "player").length;
     return { roads, ports, tradeRoutes: this.tradeRoutes.size };
+  }
+
+  private tribeInfrastructure(islandId: string): { roads: number; ports: number; tradeRoutes: number } {
+    let ports = 0;
+    for (const tile of this.tiles.values()) {
+      if (tile.islandId === islandId && tile.owner === "tribe" && tile.ready && tile.coast && (tile.building === "fishery" || tile.building === "market")) ports += 1;
+    }
+    let tradeRoutes = 0;
+    for (const relation of this.regionalRelations.values()) {
+      if (relation.stance === "trade") tradeRoutes += 1;
+    }
+    return { roads: 0, ports, tradeRoutes };
   }
 
   private regionalTradeOpenness(id: string): number {
@@ -3309,6 +3330,11 @@ export class Game {
                   : "Storm";
     const simulation = this.simulation.snapshot;
     const localFoodNeed = Math.max(1, snap.people * 2.5);
+    const currentRegime = simulation.climate.regime;
+    const regimeNote = currentRegime === "dry" ? " A dry decade is settling in."
+      : currentRegime === "wet" ? " Wet years are favoring the fields."
+      : currentRegime === "dry-cold" ? " Cold drought is stressing crops and morale."
+      : "";
     const outlook = simulation.mortalityRisk > 0.48
       ? "Demographic crisis"
       : this.food < localFoodNeed * 0.55
@@ -3317,20 +3343,34 @@ export class Game {
           ? "Households are looking outward"
           : simulation.ecology.disease > 0.48
             ? "Public health is under strain"
-            : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
-              ? "The land is carrying a cost"
-              : "Conditions are broadly stable";
+            : simulation.ecology.minerals < 0.2
+              ? "Mines are nearly exhausted"
+              : simulation.ecology.minerals < 0.5
+                ? "Mineral yields are declining"
+                : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
+                  ? "The land is carrying a cost"
+                  : currentRegime === "dry" || currentRegime === "dry-cold"
+                    ? "The climate is drying"
+                    : currentRegime === "wet"
+                      ? "The climate is wetting"
+                      : "Conditions are broadly stable";
     const cause = simulation.mortalityRisk > 0.48
-      ? "Scarcity, ecological stress, or disease is now affecting the population."
+      ? "Scarcity, ecological stress, or disease is now affecting the population." + regimeNote
       : this.food < localFoodNeed * 0.55
-        ? "Production and stored staples are below the settlement’s near-term needs."
+        ? "Production and stored staples are below the settlement’s near-term needs." + regimeNote
         : simulation.migrationPressure > 0.42
-          ? "Crowding, remembered hardship, or weak local opportunity is increasing migration pressure."
+          ? "Crowding, remembered hardship, or weak local opportunity is increasing migration pressure." + regimeNote
           : simulation.ecology.disease > 0.48
-            ? "Dense settlement and stressed water create a disease burden; care institutions and waterworks help."
-            : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
-              ? "Extraction and climate are weakening soil or water faster than they recover."
-              : "The council’s current institutions, ecology, and stores are in a workable balance.";
+            ? "Dense settlement and stressed water create a disease burden; care institutions and waterworks help." + regimeNote
+            : simulation.ecology.minerals < 0.2
+              ? "Local mineral deposits are spent; trade or new territory may be needed to sustain gold income." + regimeNote
+              : simulation.ecology.minerals < 0.5
+                ? "Mining is drawing down deposits faster than geology can replenish them." + regimeNote
+                : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
+                  ? "Extraction and climate are weakening soil or water faster than they recover." + regimeNote
+                  : currentRegime !== "normal"
+                    ? (currentRegime === "dry" ? "A dry decade is settling in." : currentRegime === "dry-cold" ? "Cold drought is stressing crops and morale." : "Wet years are favoring the fields.")
+                    : "The council’s current institutions, ecology, and stores are in a workable balance.";
     this.hud.refresh({
       year: yearFromDays(this.simDays), season: this.season, era: eraName(snap.people, snap.buildingTotal),
       goal: this.goalLabel(),
