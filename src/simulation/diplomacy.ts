@@ -1,13 +1,13 @@
 export type TreatyState = "none" | "parley" | "trade-pact" | "hostile";
-export type DiplomaticMessageKind = "trade-proposal" | "rival-claim" | "warning";
+export type DiplomaticMessageKind = "trade-proposal" | "rival-claim" | "warning" | "gift" | "festival-invitation" | "marriage-alliance" | "defense-pact";
 export type DiplomaticMessage = { kind: DiplomaticMessageKind; sentYear: number; arrivesYear: number };
-export type DiplomaticChannel = { trust: number; reliability: number; treaty: TreatyState; lastYear: number; messages: DiplomaticMessage[] };
+export type DiplomaticChannel = { trust: number; reliability: number; treaty: TreatyState; lastYear: number; messages: DiplomaticMessage[]; kinshipTie: boolean };
 export type DiplomaticArrival = { kind: DiplomaticMessageKind; treaty: TreatyState; trustDelta: number; relationDelta: number };
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
 export function createDiplomaticChannel(year = 0): DiplomaticChannel {
-  return { trust: 0.26, reliability: 0.45, treaty: "none", lastYear: year, messages: [] };
+  return { trust: 0.26, reliability: 0.45, treaty: "none", lastYear: year, messages: [], kinshipTie: false };
 }
 
 /** Distance, infrastructure, and translation change the arrival time of a message. */
@@ -20,9 +20,11 @@ export function dispatchMessage(channel: DiplomaticChannel, kind: DiplomaticMess
 
 export function advanceDiplomaticChannel(channel: DiplomaticChannel, year: number, context: { infrastructure: number; languageAffinity: number; scarcity: number }): { channel: DiplomaticChannel; arrivals: DiplomaticArrival[] } {
   const elapsed = Math.max(0, year - channel.lastYear);
-  let trust = clamp(channel.trust - elapsed * (0.006 + context.scarcity * 0.008) + context.infrastructure * elapsed * 0.004);
+  const trustDecayRate = channel.kinshipTie ? 0.6 : 1;
+  let trust = clamp(channel.trust - elapsed * (0.006 + context.scarcity * 0.008) * trustDecayRate + context.infrastructure * elapsed * 0.004);
   let reliability = clamp(channel.reliability - elapsed * 0.012 + context.infrastructure * elapsed * 0.022 + context.languageAffinity * elapsed * 0.006);
   let treaty = channel.treaty;
+  let kinshipTie = channel.kinshipTie;
   const arrivals: DiplomaticArrival[] = [];
   const messages: DiplomaticMessage[] = [];
   for (const message of channel.messages) {
@@ -36,13 +38,30 @@ export function advanceDiplomaticChannel(channel: DiplomaticChannel, year: numbe
       const delta = -(0.12 + (1 - context.languageAffinity) * 0.06);
       trust = clamp(trust + delta); reliability = clamp(reliability - 0.08); treaty = "hostile";
       arrivals.push({ kind: message.kind, treaty, trustDelta: delta, relationDelta: -14 });
+    } else if (message.kind === "gift") {
+      trust = clamp(trust + 0.06); reliability = clamp(reliability + 0.05);
+      if (treaty === "none") treaty = "parley";
+      arrivals.push({ kind: message.kind, treaty, trustDelta: 0.06, relationDelta: 3 });
+    } else if (message.kind === "festival-invitation") {
+      trust = clamp(trust + 0.04); reliability = clamp(reliability + 0.04);
+      if (treaty === "none") treaty = "parley";
+      arrivals.push({ kind: message.kind, treaty, trustDelta: 0.04, relationDelta: 5 });
+    } else if (message.kind === "marriage-alliance") {
+      trust = clamp(trust + 0.12); reliability = clamp(reliability + 0.1);
+      kinshipTie = true;
+      if (treaty === "none" || treaty === "parley") treaty = "parley";
+      arrivals.push({ kind: message.kind, treaty, trustDelta: 0.12, relationDelta: 8 });
+    } else if (message.kind === "defense-pact") {
+      trust = clamp(trust + 0.08); reliability = clamp(reliability + 0.06);
+      if (treaty === "none") treaty = "parley";
+      arrivals.push({ kind: message.kind, treaty, trustDelta: 0.08, relationDelta: 6 });
     } else {
       const delta = -0.03 + context.languageAffinity * 0.025;
       trust = clamp(trust + delta);
       arrivals.push({ kind: message.kind, treaty, trustDelta: delta, relationDelta: -3 });
     }
   }
-  return { channel: { trust, reliability, treaty, lastYear: year, messages }, arrivals };
+  return { channel: { trust, reliability, treaty, lastYear: year, messages, kinshipTie }, arrivals };
 }
 
 export function channelSupportsTrade(channel: DiplomaticChannel): boolean {

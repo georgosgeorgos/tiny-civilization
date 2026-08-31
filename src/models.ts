@@ -1316,7 +1316,7 @@ export function makePlanter(): THREE.Group {
   return group;
 }
 
-export type LandmarkKind = "vent" | "ruin" | "crystal" | "stone" | "mesa" | "oasis" | "tower" | "crane";
+export type LandmarkKind = "vent" | "ruin" | "crystal" | "stone" | "mesa" | "oasis" | "tower" | "crane" | "crater";
 
 export function makeLandmark(kind: LandmarkKind): THREE.Group | null {
   if (kind === "vent") return makeVolcanoVent();
@@ -1327,7 +1327,33 @@ export function makeLandmark(kind: LandmarkKind): THREE.Group | null {
   if (kind === "oasis") return makeOasis();
   if (kind === "tower") return makeRadioTower();
   if (kind === "crane") return makeHarborCrane();
+  if (kind === "crater") return makeCrater();
   return null;
+}
+
+function makeCrater(): THREE.Group {
+  const group = new THREE.Group();
+  const scorched = new THREE.MeshStandardMaterial({ color: 0x2a1a0e, roughness: 0.95, flatShading: true });
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.08, 6, 8), scorched);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.04;
+  const depression = new THREE.Mesh(
+    new THREE.ConeGeometry(0.34, 0.28, 8),
+    new THREE.MeshStandardMaterial({ color: 0x1a0f08, roughness: 1, flatShading: true }),
+  );
+  depression.rotation.x = Math.PI;
+  depression.position.y = 0.14;
+  const debris = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(0.06, 0),
+    new THREE.MeshStandardMaterial({ color: 0x3d2a18, roughness: 0.9, flatShading: true }),
+  );
+  debris.position.set(0.32, 0.05, 0.18);
+  const debris2 = debris.clone();
+  debris2.position.set(-0.28, 0.04, -0.22);
+  debris2.scale.setScalar(0.8);
+  group.add(rim, depression, debris, debris2);
+  group.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
 }
 
 export type DecorKind = "pine" | "round" | "rocks" | "palm" | "cactus" | "reeds" | "ice" | "lamp" | "planter";

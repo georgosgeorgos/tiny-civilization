@@ -37,7 +37,7 @@ export type Biome =
   | "swamp"
   | "urban"
   | "plaza";
-export type Landmark = "none" | "vent" | "ruin" | "crystal" | "stone" | "mesa" | "oasis" | "tower" | "crane";
+export type Landmark = "none" | "vent" | "ruin" | "crystal" | "stone" | "mesa" | "oasis" | "tower" | "crane" | "crater";
 export type Terrain = "coast" | "plain" | "hill" | "mountain";
 
 export type WorldSample = {

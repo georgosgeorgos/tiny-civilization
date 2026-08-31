@@ -38,6 +38,16 @@ export type CulturalState = {
  * an origin's later institutions can be explained by a concrete past crisis. */
 export type OriginCrisis = { origin: Origin; outcome: string; year: number };
 
+export type PandemicState = {
+  id: number;
+  virulence: number;
+  transmissibility: number;
+  originRegion: string;
+  startYear: number;
+  affectedRegions: string[];
+  resolved: boolean;
+};
+
 export type SimulationSnapshot = {
   elapsedDays: number;
   stores: Stores;
@@ -67,6 +77,7 @@ export type SimulationSnapshot = {
   innovations: InnovationState;
   originCrisis: OriginCrisis | null;
   diseaseOutbreak: boolean;
+  pandemic: PandemicState | null;
 };
 
 export type SimulationInputs = {

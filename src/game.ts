@@ -73,6 +73,19 @@ import type { HistoryLayer, HistoryMark, TerritorialClaim } from "./world-state"
 import { createSpacecraftSystem, type SpacecraftSystem } from "./spacecraft";
 import { createSubatomicSystem, type SubatomicSystem } from "./subatomic";
 import { originProfile, type OriginProfile } from "./origins";
+import { SeededRandom } from "./simulation/random.ts";
+
+type CatastropheState = {
+  kind: "earthquake" | "eruption" | "meteorite" | "tsunami" | "locusts";
+  epicenterQ: number;
+  epicenterR: number;
+  radius: number;
+  intensity: number;
+  startDay: number;
+  durationDays: number;
+  buildingsDestroyed: number;
+  resolved: boolean;
+} | null;
 
 type Person = {
   id: string;
@@ -311,6 +324,7 @@ export class Game {
   private regionalNetworkTimer = 0;
   private lifecycleTimer = 0;
   private readonly fragmentationCooldown = new Map<string, number>();
+  private readonly conflictCooldown = new Map<string, number>();
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
@@ -339,6 +353,9 @@ export class Game {
   private lastSimulationInputs: SimulationInputs | null = null;
   private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
   private lastOriginCrisis: string | null = null;
+  private readonly gameRandom!: SeededRandom;
+  private catastrophe: CatastropheState | null = null;
+  private lastEruptionDay = -Infinity;
   private pointerDown: { x: number; y: number } | null = null;
   private readonly navigationKeys = new Set<string>();
   private observerMove: {
@@ -357,6 +374,7 @@ export class Game {
     this.originProfile = originProfile(config.origin);
     this.manifest = createWorldManifest(config);
     this.chronicle = new EventChronicle();
+    this.gameRandom = new SeededRandom(config.seed ^ 0x47414d45);
     this.spacecraftMode = config.origin === "spacecraft";
     this.worldState = new WorldState(config.seed, config.archetype);
     this.weatherPace = config.temperament === "calm" ? 1.65 : config.temperament === "wild" ? 0.72 : 1;
@@ -1677,28 +1695,46 @@ export class Game {
   }
 
   private sendEnvoy(cooperate: boolean): void {
+    this.sendDiplomaticAction(cooperate ? "trade-proposal" : "rival-claim");
+  }
+
+  private sendDiplomaticAction(kind: DiplomaticMessageKind, targetSociety?: Society): void {
+    const costs: Partial<Record<DiplomaticMessageKind, number>> = {
+      "trade-proposal": 8, "rival-claim": 8, "gift": 5, "festival-invitation": 3, "marriage-alliance": 12, "defense-pact": 8,
+    };
+    const cost = costs[kind] ?? 8;
     const market = [...this.tiles.values()].some((tile) => tile.owner === "player" && tile.building === "market" && tile.ready);
+    const shrine = [...this.tiles.values()].some((tile) => tile.owner === "player" && tile.building === "shrine" && tile.ready);
     const playerPort = this.findPort("player");
-    const society = [...this.societies.values()]
-      .filter((candidate) => !cooperate || Boolean(playerPort && this.findPort("tribe", candidate.islandId)))
+    const folk = this.citizens();
+    const society = targetSociety ?? [...this.societies.values()]
+      .filter((candidate) => kind !== "trade-proposal" || Boolean(playerPort && this.findPort("tribe", candidate.islandId)))
       .sort((a, b) => a.relation - b.relation)[0];
     if (!society) return this.setHint("Discover another society before sending an envoy.");
-    if (!market) return this.setHint("A market is needed to send an envoy.");
-    if (cooperate && !playerPort) return this.setHint("Build a coastal fishery or market before sending a trade envoy.");
-    if (this.gold < 8) return this.setHint("An envoy needs 8 gold for supplies.");
-    const kind: DiplomaticMessageKind = cooperate ? "trade-proposal" : "rival-claim";
+    if ((kind === "trade-proposal" || kind === "rival-claim" || kind === "gift") && !market) return this.setHint("A market is needed to send an envoy.");
+    if (kind === "trade-proposal" && !playerPort) return this.setHint("Build a coastal fishery or market before sending a trade envoy.");
+    if (kind === "festival-invitation" && !shrine) return this.setHint("A shrine is needed to host a festival invitation.");
+    if (kind === "marriage-alliance" && folk.length <= 8) return this.setHint("The settlement needs more than 8 people for a marriage alliance.");
+    if (kind === "marriage-alliance" && !channelSupportsContact(society.diplomacy)) return this.setHint("A parley or trade pact is needed before a marriage alliance.");
+    if (kind === "defense-pact" && !this.simulation.snapshot.institutions.forms.includes("watch")) return this.setHint("A watch institution is needed for a defense pact.");
+    if (kind === "defense-pact" && !channelSupportsContact(society.diplomacy)) return this.setHint("A parley or trade pact is needed before a defense pact.");
+    if (this.gold < cost) return this.setHint(`A ${kind} needs ${cost} gold.`);
     if (society.diplomacy.messages.some((message) => message.kind === kind)) {
-      this.setHint(`An earlier ${cooperate ? "trade" : "border"} message is still traveling to ${society.name}.`);
+      this.setHint(`An earlier ${kind} message is still traveling to ${society.name}.`);
       return;
     }
-    this.gold -= 8;
+    this.gold -= cost;
     const playerLanguage = this.simulation.snapshot.culture.language;
     const affinity = playerLanguage.family === society.culture.language.family ? 0.95 : Math.max(0.12, 1 - Math.abs(playerLanguage.boundary - society.culture.language.boundary) * 0.7);
     const [q, r] = society.islandId.split(",").map(Number);
     society.diplomacy = dispatchMessage(society.diplomacy, kind, yearFromDays(this.simDays), {
       distance: hexDistance(q, r), infrastructure: (playerPort ? 0.7 : 0.2) + (this.playerInfrastructure().roads > 1 ? 0.12 : 0), languageAffinity: affinity,
     });
-    this.setHint(`${cooperate ? "A trade envoy" : "A rival claim"} departs for ${society.name}; its response will arrive after the journey.`);
+    const labels: Partial<Record<DiplomaticMessageKind, string>> = {
+      "trade-proposal": "A trade envoy", "rival-claim": "A rival claim", "gift": "A diplomatic gift",
+      "festival-invitation": "A festival invitation", "marriage-alliance": "A marriage proposal", "defense-pact": "A defense pact offer",
+    };
+    this.setHint(`${labels[kind] ?? "A message"} departs for ${society.name}; its response will arrive after the journey.`);
   }
 
   private findPort(owner: "player" | "tribe", islandId?: string): Tile | null {
@@ -2216,7 +2252,19 @@ export class Game {
       society.diplomacy = result.channel;
       for (const arrival of result.arrivals) {
         society.relation = THREE.MathUtils.clamp(society.relation + arrival.relationDelta, -60, 70);
-        if (arrival.treaty === "trade-pact") {
+        if (arrival.kind === "gift") {
+          this.setHint(`${society.name} receives a diplomatic gift. Trust grows slowly but reliably.`);
+        } else if (arrival.kind === "festival-invitation") {
+          this.mood = Math.min(100, this.mood + 4);
+          society.mood = Math.min(100, society.mood + 4);
+          this.setHint(`${society.name} joins a shared festival. Both settlements' spirits lift.`);
+        } else if (arrival.kind === "marriage-alliance") {
+          this.moveResident("player", society.islandId);
+          this.moveResident(society.islandId, "player");
+          this.setHint(`A marriage alliance binds ${society.name} and the home settlement. Trust will decay more slowly.`);
+        } else if (arrival.kind === "defense-pact") {
+          this.setHint(`${society.name} accepts a defense pact. Conflict escalation between the two is now restrained.`);
+        } else if (arrival.treaty === "trade-pact") {
           society.gold += 5;
           this.mood = Math.min(100, this.mood + 2);
           this.createTradeRoute(society);
@@ -2268,6 +2316,43 @@ export class Game {
           const action = next.stance === "trade" ? "open a direct trade corridor" : next.stance === "parley" ? "begin a cautious direct parley" : "close their border in hostility";
           this.setHint(`${left.name} and ${right.name} ${action}.`);
         }
+        this.tryAutonomousDiplomaticAction(left, right, year);
+      }
+    }
+  }
+
+  private tryAutonomousDiplomaticAction(left: Society, right: Society, year: number): void {
+    const roll = hash2(left.islandId.length + right.islandId.length, year);
+    if (roll <= 0.85) return;
+    const leftPop = this.people.filter((person) => person.tribe && person.islandId === left.islandId).length;
+    const rightPop = this.people.filter((person) => person.tribe && person.islandId === right.islandId).length;
+    const traits = left.culture.traits;
+    const [leftQ, leftR] = left.islandId.split(",").map(Number);
+    const distance = hexDistance(leftQ - Number(right.islandId.split(",")[0]), leftR - Number(right.islandId.split(",")[1]));
+    const infrastructure = Math.min(1, (this.findPort("tribe", left.islandId) ? 0.42 : 0.05) + (this.findPort("tribe", right.islandId) ? 0.42 : 0.05));
+    const affinity = left.culture.language.family === right.culture.language.family ? 0.9 : Math.max(0.1, 1 - Math.abs(left.culture.language.boundary - right.culture.language.boundary) * 0.62);
+    const dispatchContext = { distance, infrastructure, languageAffinity: affinity };
+    if (traits.cooperation > 0.6) {
+      const shrine = [...this.tiles.values()].some((tile) => tile.islandId === left.islandId && tile.owner === "tribe" && tile.building === "shrine" && tile.ready);
+      const kind: DiplomaticMessageKind = shrine && roll > 0.92 ? "festival-invitation" : "gift";
+      if (left.gold >= 5 && !left.diplomacy.messages.some((m) => m.kind === kind)) {
+        left.gold -= kind === "festival-invitation" ? 3 : 5;
+        left.diplomacy = dispatchMessage(left.diplomacy, kind, year, dispatchContext);
+        return;
+      }
+    }
+    if (traits.mobility > 0.6 && leftPop > 8 && rightPop > 8 && channelSupportsContact(left.diplomacy) && !left.diplomacy.kinshipTie) {
+      if (left.gold >= 12 && !left.diplomacy.messages.some((m) => m.kind === "marriage-alliance")) {
+        left.gold -= 12;
+        left.diplomacy = dispatchMessage(left.diplomacy, "marriage-alliance", year, dispatchContext);
+        return;
+      }
+    }
+    if (traits.resilience > 0.6 && channelSupportsContact(left.diplomacy)) {
+      const watch = left.era !== "Camp" && (left.culture.traits.resilience > 0.62 || left.culture.practices.includes("fortified quarters"));
+      if (watch && left.gold >= 8 && !left.diplomacy.messages.some((m) => m.kind === "defense-pact")) {
+        left.gold -= 8;
+        left.diplomacy = dispatchMessage(left.diplomacy, "defense-pact", year, dispatchContext);
       }
     }
   }
@@ -2294,24 +2379,32 @@ export class Game {
   private resolveRegionalConflicts(): void {
     const player = this.civSnapshot();
     const defense = player.counts.forge * 0.18 + this.playerInfrastructure().roads * 0.025;
-    const diplomacy = player.counts.market * 0.24 + this.simulation.snapshot.institutions.legitimacy * 0.22;
+    const diplomacyScore = player.counts.market * 0.24 + this.simulation.snapshot.institutions.legitimacy * 0.22;
+    const year = yearFromDays(this.simDays);
     for (const society of this.societies.values()) {
+      const cooldownKey = this.regionalRelationKey("player", society.islandId);
+      const cooldownUntil = this.conflictCooldown.get(cooldownKey) ?? 0;
+      if (year < cooldownUntil) continue;
+      const hasPact = society.diplomacy.messages.some((m) => m.kind === "defense-pact") || (society.diplomacy.kinshipTie && society.diplomacy.trust > 0.5);
       const contested = this.contestedResourcePressure(society);
       if (contested > 5 && channelSupportsContact(society.diplomacy) && society.diplomacy.trust > 0.4) {
-        const roll = hash2(society.islandId.length, yearFromDays(this.simDays));
-        if (roll > 0.4) {
+        const roll = hash2(society.islandId.length, year);
+        const negotiationChance = hasPact ? 0.25 : 0.4;
+        if (roll > negotiationChance) {
           this.splitContestedTerritory(society);
+          this.conflictCooldown.set(cooldownKey, year + 5);
           this.setHint(`${society.name} negotiated a territorial settlement; contested lands are divided.`);
           continue;
         }
       }
       const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const escalationFactor = hasPact ? 0.7 : 1;
       const result = resolveConflict({
         relation: society.relation,
         scarcity: Math.max(0, 1 - society.food / Math.max(3, population * 2.5)),
-        grievance: Math.max(0, -society.relation / 45) + contested * 0.04,
+        grievance: Math.max(0, -society.relation / 45) * escalationFactor + contested * 0.04,
         defense,
-        diplomacy,
+        diplomacy: diplomacyScore,
       });
       if (result.outcome === "none") continue;
       society.relation = THREE.MathUtils.clamp(society.relation + result.relationDelta, -60, 70);
@@ -2475,6 +2568,11 @@ export class Game {
       this.setHint(`Year ${year} begins. Stores are counted and shared.`);
       this.captureChronicleCheckpoint(year);
       this.advanceAges(year);
+      this.checkCatastrophe(year);
+    }
+
+    if (this.catastrophe && !this.catastrophe.resolved) {
+      this.resolveCatastrophe();
     }
 
     this.tickConstruction(simDt);
@@ -2515,7 +2613,7 @@ export class Game {
         this.event = "festival";
         this.eventUntil = this.simDays + 0.55;
         this.setHint("A festival night. Mood lifts across the isles.");
-      } else if (roll > 0.84 && roll < 0.9 && this.discovered.has("volcano") && this.event === "none") {
+      } else if (roll > 0.84 && roll < 0.9 && this.discovered.has("volcano") && this.event === "none" && this.simDays - this.lastEruptionDay > 20 * 12) {
         this.event = "ash";
         this.eventUntil = this.simDays + 0.7;
         this.setHint("The volcano breathes ash. Mines run hot.");
@@ -3200,6 +3298,154 @@ export class Game {
       this.assignHomes();
       this.assignJobs();
       this.setHint(`${toRemove.length === 1 ? "An elder" : "Elders"} passed away this year.`);
+    }
+  }
+
+  private checkCatastrophe(_year: number): void {
+    if (this.catastrophe && !this.catastrophe.resolved) return;
+    this.catastrophe = null;
+    const tiles = [...this.tiles.values()];
+    const hasVolcanicTile = tiles.some((t) => t.biome === "volcanic");
+    const ventTile = tiles.find((t) => {
+      const sample = this.worldState.sample(t.q, t.r);
+      return sample?.landmark === "vent";
+    });
+
+    if (this.spacecraftMode) {
+      if (this.gameRandom.next() < 1 / 800) {
+        const intensity = 0.3 + this.gameRandom.next() * 0.5;
+        this.hullIntegrity = Math.max(12, this.hullIntegrity - (5 + intensity * 10));
+        this.setHint("A meteorite strikes the hull. Integrity drops; repair modules respond.");
+      }
+      return;
+    }
+
+    const regime = this.simulation.snapshot.climate.regime;
+
+    if (this.gameRandom.next() < (1 / 100) * (hasVolcanicTile ? 2.5 : 1)) {
+      const epicenter = (hasVolcanicTile ? tiles.find((t) => t.biome === "volcanic") : undefined) ?? tiles[Math.floor(this.gameRandom.next() * tiles.length)];
+      if (epicenter) {
+        const intensity = 0.4 + this.gameRandom.next() * 0.4;
+        this.catastrophe = { kind: "earthquake", epicenterQ: epicenter.q, epicenterR: epicenter.r, radius: 2 + Math.floor(this.gameRandom.next() * 3), intensity, startDay: this.simDays, durationDays: 0.5, buildingsDestroyed: 0, resolved: false };
+        this.setHint("An earthquake shakes the land. Buildings tremble.");
+        if (epicenter.coast && this.gameRandom.next() < 0.4) {
+          this.catastrophe.kind = "tsunami";
+          this.catastrophe.radius = 99;
+          this.setHint("An earthquake triggers a tsunami. Coastal settlements are at risk.");
+        }
+        return;
+      }
+    }
+
+    if (ventTile && this.gameRandom.next() < 1 / 200) {
+      const intensity = 0.5 + this.gameRandom.next() * 0.35;
+      this.catastrophe = { kind: "eruption", epicenterQ: ventTile.q, epicenterR: ventTile.r, radius: 3 + Math.floor(this.gameRandom.next() * 4), intensity, startDay: this.simDays, durationDays: 3, buildingsDestroyed: 0, resolved: false };
+      this.lastEruptionDay = this.simDays;
+      this.setHint("The volcano erupts. Lava and ash engulf the surroundings.");
+      return;
+    }
+
+    if (this.gameRandom.next() < 1 / 800) {
+      const epicenter = tiles[Math.floor(this.gameRandom.next() * tiles.length)];
+      if (epicenter) {
+        const intensity = 0.5 + this.gameRandom.next() * 0.4;
+        this.catastrophe = { kind: "meteorite", epicenterQ: epicenter.q, epicenterR: epicenter.r, radius: 1 + Math.floor(this.gameRandom.next() * 3), intensity, startDay: this.simDays, durationDays: 0, buildingsDestroyed: 0, resolved: false };
+        this.worldState.setLandmarkOverride(epicenter.q, epicenter.r, "crater");
+        this.setHint("A meteorite strikes the earth. A crater marks the impact.");
+        return;
+      }
+    }
+
+    const locustChance = (1 / 50) * (regime === "dry" || regime === "dry-cold" ? 2 : 1);
+    if (this.gameRandom.next() < locustChance) {
+      this.catastrophe = { kind: "locusts", epicenterQ: 0, epicenterR: 0, radius: 0, intensity: 0.6, startDay: this.simDays, durationDays: 0.8, buildingsDestroyed: 0, resolved: false };
+      this.food *= 0.4;
+      for (const society of this.societies.values()) society.food *= 0.45;
+      this.setHint("A locust swarm descends. Stored food is devastated and farms suffer.");
+      this.catastrophe.resolved = true;
+      return;
+    }
+  }
+
+  private resolveCatastrophe(): void {
+    const cat = this.catastrophe;
+    if (!cat || cat.resolved) return;
+
+    const snapshot = this.simulation.snapshot;
+    const forms = new Set(snapshot.institutions.forms);
+    const mitigation = (forms.has("watch") ? 0.15 : 0) + (snapshot.culture.traits.resilience * 0.1) + (forms.has("maintenance") ? 0.12 : 0);
+
+    const toRemovePersons: number[] = [];
+    let destroyed = 0;
+
+    if (cat.kind === "tsunami") {
+      for (const tile of this.tiles.values()) {
+        if (!tile.coast || !tile.building) continue;
+        if (this.gameRandom.next() >= cat.intensity * (1 - mitigation)) continue;
+        if (tile.buildingMesh) tile.mesh.remove(tile.buildingMesh);
+        if (tile.building === "hut") {
+          for (let i = 0; i < this.people.length; i++) {
+            if (this.people[i].homeQ === tile.q && this.people[i].homeR === tile.r) toRemovePersons.push(i);
+          }
+        }
+        this.recordStratigraphy(tile, "abandonment", 0.65);
+        tile.building = null;
+        tile.buildingMesh = null;
+        tile.ready = false;
+        tile.buildLeft = 0;
+        tile.buildTotal = 0;
+        this.persistTile(tile);
+        destroyed += 1;
+      }
+    } else {
+      for (const tile of this.tiles.values()) {
+        if (!tile.building) continue;
+        if (hexDistance(tile.q - cat.epicenterQ, tile.r - cat.epicenterR) > cat.radius) continue;
+        if (this.gameRandom.next() >= cat.intensity * (1 - mitigation)) continue;
+        if (tile.buildingMesh) tile.mesh.remove(tile.buildingMesh);
+        if (tile.building === "hut") {
+          for (let i = 0; i < this.people.length; i++) {
+            if (this.people[i].homeQ === tile.q && this.people[i].homeR === tile.r) toRemovePersons.push(i);
+          }
+        }
+        this.recordStratigraphy(tile, "abandonment", 0.65);
+        tile.building = null;
+        tile.buildingMesh = null;
+        tile.ready = false;
+        tile.buildLeft = 0;
+        tile.buildTotal = 0;
+        this.persistTile(tile);
+        destroyed += 1;
+      }
+
+      if (cat.kind === "eruption") {
+        for (const tile of this.tiles.values()) {
+          if (hexDistance(tile.q - cat.epicenterQ, tile.r - cat.epicenterR) > Math.max(1, Math.floor(cat.radius * 0.5))) continue;
+          this.worldState.setBiomeOverride(tile.q, tile.r, "volcanic");
+        }
+      }
+    }
+
+    const uniquePersons = [...new Set(toRemovePersons)].sort((a, b) => b - a);
+    for (const idx of uniquePersons) {
+      const person = this.people[idx];
+      if (person) {
+        this.peopleGroup.remove(person.mesh);
+        this.people.splice(idx, 1);
+      }
+    }
+
+    if (destroyed > 0 || uniquePersons.length > 0) {
+      this.assignHomes();
+      this.assignJobs();
+    }
+
+    cat.buildingsDestroyed = destroyed;
+    cat.resolved = true;
+    const moodPenalty = Math.min(30, 15 + destroyed * 2);
+    this.mood = Math.max(0, this.mood - moodPenalty);
+    if (destroyed > 0) {
+      this.setHint(`The ${cat.kind} destroyed ${destroyed} building${destroyed > 1 ? "s" : ""}. Mood falls as the settlement recovers.`);
     }
   }
 

@@ -19,6 +19,7 @@ export class SimulationEngine {
   private readonly cells: CellularEcology;
   private readonly climate: ClimateSystem;
   private state: SimulationSnapshot;
+  private lastPandemicYear = -100;
 
   constructor(seed: number, stores: Stores, knowledge = 0) {
     this.random = new SeededRandom(seed);
@@ -50,6 +51,7 @@ export class SimulationEngine {
       innovations: { techniques: [], provenance: {} },
       originCrisis: null,
       diseaseOutbreak: false,
+      pandemic: null,
     };
   }
 
@@ -192,6 +194,7 @@ export class SimulationEngine {
     this.updateEvolution(inputs);
     this.state.elapsedDays += stepDays;
     this.resolveOriginCrisis(inputs);
+    this.advancePandemic(inputs, yearPart, institutionRules.healthProtection + innovationRules.healthProtection);
   }
 
   private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate): void {
@@ -306,6 +309,49 @@ export class SimulationEngine {
     if (outcome === "fortified quarters" || outcome === "emergency rationing") this.state.stability = clamp01(this.state.stability - 0.06);
   }
 
+  private advancePandemic(inputs: SimulationInputs, yearPart: number, healthProtection: number): void {
+    const currentYear = Math.floor(this.state.elapsedDays / DAYS_PER_YEAR);
+    if (this.state.pandemic && !this.state.pandemic.resolved) {
+      this.state.mortalityRisk = clamp01(
+        this.state.mortalityRisk + this.state.pandemic.virulence * 0.08 * yearPart * (1 - clamp01(healthProtection)),
+      );
+      this.state.stability = clamp01(this.state.stability - this.state.pandemic.virulence * 0.006 * yearPart);
+      const minDurationYears = 2;
+      const elapsed = currentYear - this.state.pandemic.startYear;
+      if (this.state.ecology.disease < 0.3 && elapsed >= minDurationYears) {
+        this.state.pandemic.resolved = true;
+        this.lastPandemicYear = currentYear;
+        if (!this.state.culture.practices.includes("plague-memory")) {
+          this.state.culture = {
+            ...this.state.culture,
+            practices: [...this.state.culture.practices, "plague-memory"].sort(),
+          };
+        }
+      }
+      return;
+    }
+    if (this.state.pandemic?.resolved) {
+      this.state.pandemic = null;
+    }
+    const prevYear = Math.floor((this.state.elapsedDays - yearPart * DAYS_PER_YEAR) / DAYS_PER_YEAR);
+    if (currentYear === prevYear) return;
+    if (this.state.ecology.disease <= 0.65) return;
+    if (inputs.population <= 12) return;
+    if (inputs.infrastructure.tradeRoutes <= 0) return;
+    if (currentYear - this.lastPandemicYear < 40) return;
+    const roll = this.random.next();
+    if (roll >= (this.state.ecology.disease - 0.65) * 0.12) return;
+    this.state.pandemic = {
+      id: currentYear,
+      virulence: 0.15 + this.random.next() * 0.4,
+      transmissibility: 0.15 + this.random.next() * 0.4,
+      originRegion: "local",
+      startYear: currentYear,
+      affectedRegions: ["local"],
+      resolved: false,
+    };
+  }
+
   private releaseFamineBuffer(population: number): void {
     if (this.state.stores.food >= population * 2.0) return;
     if (!this.state.institutions.forms.includes("commons")) return;
@@ -334,6 +380,7 @@ export class SimulationEngine {
 
   private diseaseBurden(inputs: SimulationInputs, care: number): number {
     const density = inputs.population / Math.max(1, inputs.housing);
-    return clamp01((this.state.ecology.disease - 0.08) * 1.35 + Math.max(0, density - 0.72) * 0.32 - care);
+    const plagueMemory = this.state.culture.practices.includes("plague-memory") ? 0.1 : 0;
+    return clamp01((this.state.ecology.disease - 0.08) * 1.35 + Math.max(0, density - 0.72) * 0.32 - care - plagueMemory);
   }
 }

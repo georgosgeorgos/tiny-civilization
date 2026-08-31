@@ -1,6 +1,6 @@
 import type { BuildingId } from "./buildings";
 import { hexKey } from "./hex";
-import { sampleWorld, type WorldSample } from "./world";
+import { sampleWorld, type Biome, type Landmark, type WorldSample } from "./world";
 import type { WorldArchetype } from "./config";
 
 /** Logical storage is deliberately coarser than rendering. A chunk can remain
@@ -62,6 +62,8 @@ export function chunkKey(q: number, r: number): string {
  */
 export class WorldState {
   private readonly chunks = new Map<string, WorldChunk>();
+  private readonly biomeOverrides = new Map<string, Biome>();
+  private readonly landmarkOverrides = new Map<string, Landmark>();
   private tick = 0;
   private readonly seed: number;
   private readonly archetype: WorldArchetype;
@@ -72,7 +74,22 @@ export class WorldState {
   }
 
   sample(q: number, r: number): WorldSample | null {
-    return sampleWorld(q, r, this.seed, this.archetype);
+    const base = sampleWorld(q, r, this.seed, this.archetype);
+    if (!base) return null;
+    const key = hexKey(q, r);
+    const biome = this.biomeOverrides.get(key);
+    const landmark = this.landmarkOverrides.get(key);
+    if (biome) base.biome = biome;
+    if (landmark) base.landmark = landmark;
+    return base;
+  }
+
+  setBiomeOverride(q: number, r: number, biome: Biome): void {
+    this.biomeOverrides.set(hexKey(q, r), biome);
+  }
+
+  setLandmarkOverride(q: number, r: number, landmark: Landmark): void {
+    this.landmarkOverrides.set(hexKey(q, r), landmark);
   }
 
   tile(q: number, r: number): StoredTile {
