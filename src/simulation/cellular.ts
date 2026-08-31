@@ -67,7 +67,7 @@ export class CellularEcology {
     }
   }
 
-  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing): CellularMetrics {
+  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing, diseaseImport = 0): CellularMetrics {
     // Long-horizon simulation converges in bounded batches rather than replaying every day.
     const iterations = Math.max(1, Math.min(240, Math.ceil(days * 2)));
     const dt = Math.min(0.5, days / iterations);
@@ -123,7 +123,7 @@ export class CellularEcology {
         const mineralRecovery = use !== LAND_USE.mine ? 0.0001 : 0;
         mineralsNext[i] = clamp(this.minerals[i] + dt * (0.0025 * suitability + mineralRecovery + 0.005 * (neighbours.minerals - this.minerals[i]) - minePressure * (0.45 + suitability * 0.3)));
         diseaseNext[i] = clamp(this.disease[i] + dt * (
-          localSettlement * (0.035 + (1 - this.water[i]) * 0.05) + flood * 0.035 -
+          localSettlement * (0.035 + (1 - this.water[i]) * 0.05) + flood * 0.035 + diseaseImport * 0.12 -
           this.disease[i] * (0.06 + cooperation * 0.025 + resilience * 0.018)
         ));
         settlementNext[i] = clamp(localSettlement + dt * (buildingHere * (1.12 + cooperation * 0.45) - (1 - suitability) * 0.015 - disaster * 0.09));

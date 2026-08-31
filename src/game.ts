@@ -3922,6 +3922,50 @@ export class Game {
     this.setHint(`The council completed its first priority and is now turning to ${next}.`);
   }
 
+  private computeOutlook(
+    simulation: Readonly<import("./simulation/types.ts").SimulationSnapshot>,
+    localFoodNeed: number,
+    currentRegime: import("./simulation/climate.ts").ClimateRegime,
+    regimeNote: string,
+    activeCatastrophe: boolean | null | undefined,
+    activePandemic: boolean | import("./simulation/types.ts").PandemicState | null,
+    activeWar: boolean,
+    activeAlien: boolean | import("./simulation/types.ts").AlienContactState | null,
+  ): { outlook: string; cause: string } {
+    if (activeCatastrophe && this.catastrophe) {
+      const kind = this.catastrophe.kind;
+      const label = kind === "earthquake" ? "Earthquake" : kind === "eruption" ? "Eruption" : kind === "meteorite" ? "Meteorite impact" : kind === "tsunami" ? "Tsunami" : "Locust swarm";
+      return { outlook: `Catastrophe: ${label}`, cause: `A ${kind} is devastating the region. Institutional preparedness and resilience determine the damage.${regimeNote}` };
+    }
+    if (activePandemic)
+      return { outlook: "Pandemic spreading", cause: `Disease is spreading through connected settlements. Health institutions and plague memory reduce mortality.${regimeNote}` };
+    if (activeWar)
+      return { outlook: "War in progress", cause: `Active conflict diverts labor and drains morale. Resolution comes through strength, exhaustion, or negotiation.${regimeNote}` };
+    if (simulation.mortalityRisk > 0.48)
+      return { outlook: "Demographic crisis", cause: `Scarcity, ecological stress, or disease is now affecting the population.${regimeNote}` };
+    if (this.food < localFoodNeed * 0.55)
+      return { outlook: "Food reserves are thinning", cause: `Production and stored staples are below the settlement's near-term needs.${regimeNote}` };
+    if (simulation.migrationPressure > 0.42)
+      return { outlook: "Households are looking outward", cause: `Crowding, remembered hardship, or weak local opportunity is increasing migration pressure.${regimeNote}` };
+    if (simulation.ecology.disease > 0.48)
+      return { outlook: "Public health is under strain", cause: `Dense settlement and stressed water create a disease burden; care institutions and waterworks help.${regimeNote}` };
+    if (simulation.ecology.minerals < 0.2)
+      return { outlook: "Mines are nearly exhausted", cause: `Local mineral deposits are spent; trade or new territory may be needed to sustain gold income.${regimeNote}` };
+    if (simulation.ecology.minerals < 0.5)
+      return { outlook: "Mineral yields are declining", cause: `Mining is drawing down deposits faster than geology can replenish them.${regimeNote}` };
+    if (simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42)
+      return { outlook: "The land is carrying a cost", cause: `Extraction and climate are weakening soil or water faster than they recover.${regimeNote}` };
+    if (currentRegime === "dry" || currentRegime === "dry-cold")
+      return { outlook: "The climate is drying", cause: currentRegime === "dry-cold" ? "Cold drought is stressing crops and morale." : "A dry decade is settling in." };
+    if (currentRegime === "wet")
+      return { outlook: "The climate is wetting", cause: "Wet years are favoring the fields." };
+    if (activeAlien && simulation.alienContact) {
+      const ac = simulation.alienContact;
+      return { outlook: ac.phase === "interpretation" ? "A non-terrestrial signal is being interpreted" : `Alien contact: ${ac.outcome ?? "ongoing"}`, cause: "The archive is working to interpret an anomalous signal from beyond Tidelight." };
+    }
+    return { outlook: "Conditions are broadly stable", cause: "The council's current institutions, ecology, and stores are in a workable balance." };
+  }
+
   private refreshHud(): void {
     const hour = hourFromDays(this.visualDays);
     const clock = `${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.floor((hour % 1) * 60)).padStart(2, "0")}`;
@@ -3955,48 +3999,25 @@ export class Game {
       : currentRegime === "wet" ? " Wet years are favoring the fields."
       : currentRegime === "dry-cold" ? " Cold drought is stressing crops and morale."
       : "";
-    const outlook = simulation.mortalityRisk > 0.48
-      ? "Demographic crisis"
-      : this.food < localFoodNeed * 0.55
-        ? "Food reserves are thinning"
-        : simulation.migrationPressure > 0.42
-          ? "Households are looking outward"
-          : simulation.ecology.disease > 0.48
-            ? "Public health is under strain"
-            : simulation.ecology.minerals < 0.2
-              ? "Mines are nearly exhausted"
-              : simulation.ecology.minerals < 0.5
-                ? "Mineral yields are declining"
-                : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
-                  ? "The land is carrying a cost"
-                  : currentRegime === "dry" || currentRegime === "dry-cold"
-                    ? "The climate is drying"
-                    : currentRegime === "wet"
-                      ? "The climate is wetting"
-                      : simulation.alienContact && (simulation.alienContact.phase === "interpretation" || simulation.alienContact.phase === "response")
-                        ? simulation.alienContact.phase === "interpretation" ? "A non-terrestrial signal is being interpreted" : `Alien contact: ${simulation.alienContact.outcome ?? "ongoing"}`
-                        : "Conditions are broadly stable";
-    const cause = simulation.mortalityRisk > 0.48
-      ? "Scarcity, ecological stress, or disease is now affecting the population." + regimeNote
-      : this.food < localFoodNeed * 0.55
-        ? "Production and stored staples are below the settlement’s near-term needs." + regimeNote
-        : simulation.migrationPressure > 0.42
-          ? "Crowding, remembered hardship, or weak local opportunity is increasing migration pressure." + regimeNote
-          : simulation.ecology.disease > 0.48
-            ? "Dense settlement and stressed water create a disease burden; care institutions and waterworks help." + regimeNote
-            : simulation.ecology.minerals < 0.2
-              ? "Local mineral deposits are spent; trade or new territory may be needed to sustain gold income." + regimeNote
-              : simulation.ecology.minerals < 0.5
-                ? "Mining is drawing down deposits faster than geology can replenish them." + regimeNote
-                : simulation.ecology.soil < 0.48 || simulation.ecology.water < 0.42
-                  ? "Extraction and climate are weakening soil or water faster than they recover." + regimeNote
-                  : currentRegime !== "normal"
-                    ? (currentRegime === "dry" ? "A dry decade is settling in." : currentRegime === "dry-cold" ? "Cold drought is stressing crops and morale." : "Wet years are favoring the fields.")
-                    : "The council’s current institutions, ecology, and stores are in a workable balance.";
+    const activeCatastrophe = this.catastrophe && !this.catastrophe.resolved;
+    const activePandemic = simulation.pandemic && !simulation.pandemic.resolved;
+    const activeWar = this.activeWars.size > 0;
+    const activeAlien = simulation.alienContact && (simulation.alienContact.phase === "interpretation" || simulation.alienContact.phase === "response");
+    const crisisFlags: string[] = [];
+    if (activeCatastrophe && this.catastrophe) {
+      const kind = this.catastrophe.kind;
+      crisisFlags.push(kind === "earthquake" ? "Quake" : kind === "eruption" ? "Eruption" : kind === "meteorite" ? "Impact" : kind === "tsunami" ? "Tsunami" : "Locusts");
+    }
+    if (activePandemic) crisisFlags.push("Plague");
+    if (activeWar) crisisFlags.push("War");
+    if (activeAlien) crisisFlags.push("Signal");
+    if (simulation.diseaseOutbreak) crisisFlags.push("Epidemic");
+    const skyWithFlags = crisisFlags.length > 0 ? `${sky} · ${crisisFlags.join(" · ")}` : sky;
+    const { outlook, cause } = this.computeOutlook(simulation, localFoodNeed, currentRegime, regimeNote, activeCatastrophe, activePandemic, activeWar, activeAlien);
     this.hud.refresh({
       year: yearFromDays(this.simDays), season: this.season, era: eraName(snap.people, snap.buildingTotal),
       goal: this.goalLabel(),
-      clock: `${timeOfDay(hour)} ${clock}`, sky, day: dayOfSeason(this.simDays), gold: this.gold,
+      clock: `${timeOfDay(hour)} ${clock}`, sky: skyWithFlags, day: dayOfSeason(this.simDays), gold: this.gold,
       food: this.food, wood: this.wood, mood: this.mood, people: snap.people,
       others: this.people.filter((person) => person.tribe).length, towns: this.societies.size, tradeRoutes: this.tradeRoutes.size, housing: snap.housing,
       technology: this.techLevel(),
@@ -4016,7 +4037,7 @@ export class Game {
     this.hud.setHint(text);
     if (this.activityLog[0] === text) return;
     this.activityLog.unshift(text);
-    this.activityLog.splice(5);
+    this.activityLog.splice(8);
     const feed = document.querySelector("#activity-feed");
     if (feed) feed.innerHTML = this.activityLog.map((entry) => `<li>${entry}</li>`).join("");
     this.chronicle.record(

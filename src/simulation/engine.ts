@@ -123,11 +123,15 @@ export class SimulationEngine {
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
     this.state.knowledge = Math.min(1_000_000_000, this.state.knowledge + (inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge * span * (0.65 + this.state.stability * 0.5));
     this.state.seasonalStress = clamp01(disaster * 0.7 + (1 - foodSecurity) * 0.3);
+    this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
     this.state.climate = climate;
     this.updateCulture(inputs, span);
+    this.releaseFamineBuffer(inputs.population);
     this.updateInstitutions(inputs, span);
     this.updateInnovations(inputs);
     this.updateEvolution(inputs);
+    this.advancePandemic(inputs, span, institutionRules.healthProtection + innovationRules.healthProtection);
+    this.advanceAlienContact(inputs, span);
     this.state.elapsedDays += span * DAYS_PER_YEAR;
     this.resolveOriginCrisis(inputs);
     return this.state;
@@ -179,10 +183,7 @@ export class SimulationEngine {
     this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6 + diseaseBurden * 0.8);
 
     this.state.seasonalStress = clamp01(this.state.seasonalStress + (disaster * 0.5 + (1 - foodSecurity) * 0.08 - 0.035) * stepDays);
-    this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate);
-    if (inputs.diseaseImport) {
-      this.state.ecology.disease = clamp01(this.state.ecology.disease + inputs.diseaseImport * 0.5);
-    }
+    this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate, inputs.diseaseImport ?? 0);
     this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
     this.state.climate = climate;
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
@@ -199,9 +200,9 @@ export class SimulationEngine {
     this.advanceAlienContact(inputs, yearPart);
   }
 
-  private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate): void {
+  private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate, diseaseImport = 0): void {
     const ecology: Ecology = this.state.ecology;
-    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate);
+    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate, diseaseImport);
     ecology.soil = cellular.soil;
     ecology.forest = cellular.forest;
     ecology.fish = cellular.fish;
