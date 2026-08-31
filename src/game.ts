@@ -47,9 +47,9 @@ import {
   yearFromDays,
   type Season,
 } from "./time";
-import { DISCOVER_COPY, UNLOAD_RADIUS, VIEW_RADIUS, sampleWorld, styleForKind, type Biome, type LandKind, type Terrain, type WorldSample } from "./world";
+import { DISCOVER_COPY, UNLOAD_RADIUS, VIEW_RADIUS, sampleWorld, styleForKind, type LandKind, type WorldSample } from "./world";
 import { Hud } from "./ui";
-import { developmentStage, isUnlocked, specialtyFor, type DevelopmentStage } from "./civilization";
+import { developmentStage, isUnlocked, specialtyFor } from "./civilization";
 import { goalCopy, type SimulationConfig } from "./config";
 import { createCosmicSystem, type CosmicSystem } from "./cosmos";
 import { DIRECTIVE_COPY, directivesFromText, speedFromText, yearsFromText, type Directive } from "./directive";
@@ -62,10 +62,10 @@ import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./s
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
-import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type BehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
+import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
 import { settleShipment } from "./simulation/market.ts";
 import { resolveConflict } from "./simulation/conflict.ts";
-import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticChannel, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
+import { advanceDiplomaticChannel, channelSupportsContact, channelSupportsTrade, createDiplomaticChannel, dispatchMessage, type DiplomaticMessageKind } from "./simulation/diplomacy.ts";
 import { advanceRegionalRelation, createRegionalRelation, regionalRelationMode, type RegionalRelation } from "./simulation/interregional.ts";
 import { TerrainChunks } from "./terrain-chunks";
 import { WorldState } from "./world-state";
@@ -75,98 +75,7 @@ import { createSubatomicSystem, type SubatomicSystem } from "./subatomic";
 import { originProfile, type OriginProfile } from "./origins";
 import { advanceWar, computeStrength, createWar, type WarState } from "./simulation/warfare.ts";
 import { SeededRandom } from "./simulation/random.ts";
-
-type CatastropheState = {
-  kind: "earthquake" | "eruption" | "meteorite" | "tsunami" | "locusts";
-  epicenterQ: number;
-  epicenterR: number;
-  radius: number;
-  intensity: number;
-  startDay: number;
-  durationDays: number;
-  buildingsDestroyed: number;
-  resolved: boolean;
-} | null;
-
-type Person = {
-  id: string;
-  mesh: THREE.Group;
-  q: number;
-  r: number;
-  destQ: number;
-  destR: number;
-  homeQ: number;
-  homeR: number;
-  workQ: number;
-  workR: number;
-  progress: number;
-  wait: number;
-  speed: number;
-  phase: number;
-  offset: THREE.Vector3;
-  role: PersonRole;
-  sleeping: boolean;
-  tribe: boolean;
-  islandId: string;
-  seed: number;
-  age: number;
-  strategy: BehavioralStrategy;
-};
-
-type Society = {
-  islandId: string;
-  kind: LandKind;
-  name: string;
-  gold: number;
-  food: number;
-  wood: number;
-  mood: number;
-  stage: DevelopmentStage;
-  relation: number;
-  knowledge: number;
-  populationCapacity: number;
-  migrationPressure: number;
-  era: EvolutionEra;
-  culture: CulturalState;
-  culturalInfluence: Partial<CultureTraits>;
-  diplomacy: DiplomaticChannel;
-};
-
-type Critter = {
-  mesh: THREE.Group;
-  q: number;
-  r: number;
-  destQ: number;
-  destR: number;
-  progress: number;
-  wait: number;
-  speed: number;
-  phase: number;
-  offset: THREE.Vector3;
-};
-
-type TradeRoute = {
-  societyId: string;
-  boat: THREE.Group;
-  progress: number;
-  direction: 1 | -1;
-  delivered: boolean;
-};
-
-type CommunicationLink = {
-  source: THREE.Vector3;
-  destination: THREE.Vector3;
-  line: THREE.Line;
-  pulse: THREE.Mesh;
-  mode: "parley" | "trade";
-};
-
-type District = "homes" | "fields" | "works" | "civic" | "harbor";
-type ObserverLens = "settlement" | "fields" | "citizen" | "society" | "network";
-type ObservatoryView = "world" | "universe" | "subatomic";
-
-type WorldEvent = "none" | "festival" | "drought" | "ash" | "trade" | "migration" | "flood" | "wildfire";
-type CivilizationGoal = SimulationConfig["goal"] | "knowledge" | "network";
+import { computeDemographics, type CatastropheState, type CivilizationGoal, type CommunicationLink, type Critter, type District, type ObservatoryView, type ObserverLens, type Person, type Society, type Tile, type TradeRoute, type WorldEvent } from "./game-types";
 
 const PEOPLE_PER_BUILDING: Record<BuildingId, { count: number; role: PersonRole }> = {
   hut: { count: BUILDINGS.hut.workers, role: BUILDINGS.hut.workerRole },
@@ -213,34 +122,6 @@ const WEATHER_COPY: Record<Weather, string> = {
 const HEX_SIZE = 1;
 const VIEW_OFFSETS = hexesInRadius(VIEW_RADIUS);
 const SPACECRAFT_DECK = hexesInRadius(10);
-
-type Tile = {
-  q: number;
-  r: number;
-  building: BuildingId | null;
-  mesh: THREE.Mesh;
-  buildingMesh: THREE.Object3D | null;
-  decor: THREE.Object3D | null;
-  baseY: number;
-  scaleY: number;
-  topMat: THREE.MeshStandardMaterial;
-  baseTop: THREE.Color;
-  biome: Biome;
-  terrain: Terrain;
-  buildable: boolean;
-  coast: boolean;
-  wooded: boolean;
-  owner: "player" | "tribe" | null;
-  territory: TerritorialClaim;
-  claimant: string | null;
-  contestedWith: string | null;
-  kind: LandKind;
-  islandId: string;
-  buildLeft: number;
-  buildTotal: number;
-  ready: boolean;
-  historyMesh: THREE.Group | null;
-};
 
 export class Game {
   private readonly canvas: HTMLCanvasElement;
@@ -2922,7 +2803,7 @@ export class Game {
         (this.event === "trade" ? markets * 2.2 : 0) +
         (alliedTowns * markets * 0.45 + this.tradeRoutes.size * markets * 1.25) * this.originProfile.production.gold,
     };
-    const playerDemographics = this.computeDemographics(folk);
+    const playerDemographics = computeDemographics(folk);
     const depRatio = (playerDemographics.children + playerDemographics.elders) / Math.max(1, playerDemographics.adults);
     const laborEff = 1 / (1 + depRatio * 0.25);
     annualProduction.food *= laborEff;
@@ -2982,7 +2863,7 @@ export class Game {
       }
       if (society.food < 1 && tribe.length > 0) tribeHappiness -= 16;
       if (tribe.length > tribeHousing) tribeHappiness -= 10;
-      const tribeDemographics = this.computeDemographics(tribe);
+      const tribeDemographics = computeDemographics(tribe);
       const tribeDepRatio = (tribeDemographics.children + tribeDemographics.elders) / Math.max(1, tribeDemographics.adults);
       const tribeLaborEff = 1 / (1 + tribeDepRatio * 0.25);
       const mobilized = this.isMobilized(society.islandId);
@@ -3687,17 +3568,6 @@ export class Game {
     if (destroyed > 0) {
       this.setHint(`The ${cat.kind} destroyed ${destroyed} building${destroyed > 1 ? "s" : ""}. Mood falls as the settlement recovers.`);
     }
-  }
-
-  private computeDemographics(people: Person[]): { children: number; adults: number; elders: number } {
-    let adults = 0;
-    let elders = 0;
-    for (const person of people) {
-      if (person.age >= 65) elders += 1;
-      else adults += 1;
-    }
-    const children = Math.round(adults * 0.28);
-    return { children, adults, elders };
   }
 
   private tryBirths(): void {
