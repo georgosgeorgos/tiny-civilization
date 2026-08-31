@@ -4001,20 +4001,23 @@ export class Game {
       this.updateAlienSignalBeacon(time);
       return;
     }
-    const cosmic = THREE.MathUtils.smoothstep(distance, 340, 680);
+    const cosmic = this.observatoryView === "world" ? 0 : THREE.MathUtils.smoothstep(distance, 340, 680);
     this.cosmicMode = cosmic > 0.35;
     this.cosmos.group.visible = cosmic > 0.01;
-    this.cosmos.group.position.copy(this.controls.target);
-    this.cosmos.group.children.forEach((child) => {
-      if (child !== this.cosmos.planet) child.visible = cosmic > 0.62;
-    });
-    this.cosmos.planet.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return;
-      const material = object.material as THREE.Material & { opacity?: number };
-      const baseOpacity = Number(material.userData.cosmicBaseOpacity ?? 1);
-      material.opacity = baseOpacity * cosmic;
-      material.transparent = baseOpacity < 1 || cosmic < 0.999;
-    });
+    if (cosmic > 0.01) {
+      this.cosmos.group.position.copy(this.controls.target);
+      this.cosmos.group.children.forEach((child) => {
+        if (child !== this.cosmos.planet) child.visible = cosmic > 0.62;
+      });
+      this.cosmos.planet.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const material = object.material as THREE.Material & { opacity?: number };
+        const baseOpacity = Number(material.userData.cosmicBaseOpacity ?? 1);
+        material.opacity = baseOpacity * cosmic;
+        material.transparent = baseOpacity < 1 || cosmic < 0.999;
+      });
+      this.cosmos.update(time, distance);
+    }
     this.tileGroup.visible = cosmic < 0.98;
     this.roadGroup.visible = cosmic < 0.98;
     this.tradeGroup.visible = cosmic < 0.98;
@@ -4023,7 +4026,6 @@ export class Game {
     this.life.group.visible = cosmic < 0.98;
     this.clouds.visible = cosmic < 0.75;
     this.water.mesh.visible = cosmic < 0.98;
-    this.cosmos.update(time, distance);
   }
 
   private resize(): void {
