@@ -340,7 +340,9 @@ body,
 .zoom-controls button.active { color: #082017; border-color: var(--accent); background: var(--accent); }
 .zoom-controls small { width: 100%; color: var(--muted); font: 10px/1.2 "Segoe UI", sans-serif; letter-spacing: .025em; }
 #planet-readout { color: #c9eaff; font-style: italic; }
-.century-step { appearance: none; border: 1px solid rgba(124,224,194,.42); border-radius: 7px; color: #dffff4; background: rgba(46,139,113,.18); cursor: pointer; padding: 7px 9px; font: 700 10px "Segoe UI", sans-serif; letter-spacing: .055em; text-transform: uppercase; }
+.time-advance { display: flex; align-items: center; gap: 4px; }
+.time-advance span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-family: "Segoe UI", sans-serif; }
+.century-step { appearance: none; border: 1px solid rgba(124,224,194,.42); border-radius: 7px; color: #dffff4; background: rgba(46,139,113,.18); cursor: pointer; padding: 6px 7px; font: 700 10px "Segoe UI", sans-serif; letter-spacing: .04em; text-transform: uppercase; }
 .century-step:hover { background: rgba(124,224,194,.28); border-color: var(--accent); }
 .council-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 5px 2px; }
 .directive-buttons { display: flex; flex-wrap: wrap; gap: 4px; }

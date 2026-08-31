@@ -897,7 +897,12 @@ export class Game {
     document.querySelectorAll<HTMLButtonElement>("[data-observatory-view]").forEach((button) => {
       button.addEventListener("click", () => this.setObservatoryView(button.dataset.observatoryView as ObservatoryView));
     });
-    document.querySelector<HTMLButtonElement>("#advance-century")?.addEventListener("click", () => this.advanceCenturyStep());
+    document.querySelectorAll<HTMLButtonElement>("[data-advance]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const years = Number(button.dataset.advance);
+        if (years > 0) this.advanceTimeStep(years);
+      });
+    });
     document.querySelector<HTMLButtonElement>("#recenter-view")?.addEventListener("click", () => this.recenterObserver());
     const speedSelector = document.querySelector<HTMLSelectElement>("#speed-selector");
     if (speedSelector) {
@@ -1180,12 +1185,11 @@ export class Game {
     this.refreshHud();
   }
 
-  /** A reproducible, inspectable macro-history increment rather than a burst of
-   * continuous real-time speed. */
-  private advanceCenturyStep(): void {
+  private advanceTimeStep(years: number): void {
     this.setObserverSpeed(0);
-    this.advanceDeepTime(100);
-    this.setHint(`Century step complete. Year ${yearFromDays(this.simDays)} is now paused for observation.`);
+    this.advanceDeepTime(years);
+    const label = years === 1 ? "1 year" : `${years.toLocaleString()} years`;
+    this.setHint(`${label} projected. Year ${yearFromDays(this.simDays)} is now paused for observation.`);
   }
 
   private placeBuilding(
