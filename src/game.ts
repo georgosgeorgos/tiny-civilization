@@ -57,7 +57,7 @@ import { institutionEffects } from "./simulation/institutions.ts";
 import { innovationEffects } from "./simulation/innovation.ts";
 import { SimulationClient } from "./simulation/client.ts";
 import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInputs } from "./simulation/types.ts";
-import type { EvolutionEra } from "./simulation/evolution.ts";
+import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
@@ -105,10 +105,6 @@ const DISTRICT_FOR_BUILDING: Record<BuildingId, District> = {
 };
 const DISTRICT_OFFSETS: Record<District, readonly [number, number]> = {
   homes: [0, 0], fields: [-4, 3], works: [4, -3], civic: [2, 2], harbor: [-2, -4],
-};
-const EVOLUTION_RANK: Record<EvolutionEra, number> = { Camp: 0, Agrarian: 1, Maritime: 2, Civic: 3, Industrial: 4, Adaptive: 5, Orbital: 5 };
-const BUILDING_ERA: Record<BuildingId, EvolutionEra> = {
-  hut: "Camp", farm: "Camp", lumber: "Camp", fishery: "Camp", orchard: "Agrarian", shrine: "Agrarian", market: "Agrarian", mine: "Maritime", forge: "Civic",
 };
 const BUILDING_TECH: Record<BuildingId, number> = { hut: 1, farm: 1, fishery: 1, lumber: 1, orchard: 2, market: 2, shrine: 2, mine: 3, forge: 4 };
 
@@ -1763,7 +1759,7 @@ export class Game {
   }
 
   private canUseBuilding(id: BuildingId, snap: CivSnapshot): boolean {
-    return isUnlocked(id, snap.people, snap.buildingTotal) && this.techLevel() >= BUILDING_TECH[id] && this.eraAllows(this.simulation.snapshot.era, id, this.simulation.snapshot.culture);
+    return isUnlocked(id, snap.people, snap.buildingTotal) && this.techLevel() >= BUILDING_TECH[id] && this.capabilityAllows(id, this.simulation.snapshot.capabilities);
   }
 
   private architectureFor(tile: Tile): import("./world").ArchStyle {
@@ -1776,15 +1772,18 @@ export class Game {
     return styleForKind(tile.kind);
   }
 
-  private eraAllows(era: EvolutionEra, id: BuildingId, culture?: CulturalState): boolean {
-    if (EVOLUTION_RANK[era] >= EVOLUTION_RANK[BUILDING_ERA[id]]) return true;
-    const practices = new Set(culture?.practices ?? []);
-    const techniques = new Set(this.simulation.snapshot.innovations.techniques);
-    if (id === "orchard" && (practices.has("soil-rest covenant") || techniques.has("irrigation") || techniques.has("terracing"))) return true;
-    if ((id === "market" || id === "shrine") && (practices.has("common granary") || techniques.has("codified-law"))) return true;
-    if (id === "fishery" && (practices.has("wayfinding compact") || techniques.has("harbor-engineering"))) return true;
-    if (id === "forge" && (practices.has("open archive") || techniques.has("masonry"))) return true;
-    return false;
+  private capabilityAllows(id: BuildingId, caps: Capabilities): boolean {
+    const req: Partial<Record<BuildingId, [keyof Capabilities, number]>> = {
+      orchard: ["agricultural", 0.3],
+      fishery: ["maritime", 0.15],
+      market: ["institutional", 0.25],
+      shrine: ["institutional", 0.2],
+      mine: ["extractive", 0.2],
+      forge: ["extractive", 0.4],
+    };
+    const entry = req[id];
+    if (!entry) return true;
+    return caps[entry[0]] >= entry[1];
   }
 
   private terrainAllows(id: BuildingId, tile: Tile): boolean {
@@ -1912,6 +1911,7 @@ export class Game {
         populationCapacity: 2,
         migrationPressure: 0,
         era: "Camp",
+        capabilities: { agricultural: 0, maritime: 0, institutional: 0, extractive: 0, ecological: 0 },
         culture: inherited
           ? forkCulture(inherited, Math.floor(hash2(group.tiles[0]?.q ?? 1, group.tiles[0]?.r ?? 1) * 1_000_000), "renewal")
           : forkCulture(this.simulation.snapshot.culture, Math.floor(hash2(group.tiles[0]?.q ?? 1, group.tiles[0]?.r ?? 1) * 1_000_000), "diaspora"),
@@ -1987,6 +1987,7 @@ export class Game {
       populationCapacity: 2,
       migrationPressure: 0.15,
       era: "Camp",
+      capabilities: { agricultural: 0, maritime: 0, institutional: 0, extractive: 0, ecological: 0 },
       stage: "Camp",
       culture: branch,
       culturalInfluence: {},
@@ -2531,7 +2532,7 @@ export class Game {
         (building) =>
           isUnlocked(building, people, buildingTotal) &&
           this.techLevel(society.knowledge) >= BUILDING_TECH[building] &&
-          this.eraAllows(society.era, building, society.culture) &&
+          this.capabilityAllows(building, society.capabilities) &&
           this.canSite(building, society.islandId, society),
         this.directiveForCulture(society.culture.traits),
       );
@@ -2606,6 +2607,7 @@ export class Game {
       this.setHint(`Year ${year} begins. Stores are counted and shared.`);
       this.captureChronicleCheckpoint(year);
       this.advanceAges(year);
+      this.transmitCulture();
       this.checkCatastrophe(year);
     }
 
@@ -2832,6 +2834,7 @@ export class Game {
       diseaseImport: this.playerDiseaseImport,
       origin: this.origin,
       demographics: playerDemographics,
+      aggregateTraits: this.computeAggregateCulturalTraits(folk),
     };
     this.lastSimulationInputs = localInputs;
     const simulated = this.simulation.advance(localInputs);
@@ -2890,6 +2893,7 @@ export class Game {
           culturalInfluence: society.culturalInfluence,
           diseaseImport: this.societyDiseaseImport.get(society.islandId) ?? 0,
           demographics: tribeDemographics,
+          aggregateTraits: this.computeAggregateCulturalTraits(tribe),
         },
       });
       society.stage = developmentStage(tribe.length, [...this.tiles.values()].filter(
@@ -2909,6 +2913,7 @@ export class Game {
       society.populationCapacity = remote.populationCapacity;
       society.migrationPressure = remote.migrationPressure;
       society.era = remote.era;
+      society.capabilities = remote.capabilities;
       society.culture = remote.culture;
     }
 
@@ -3422,6 +3427,56 @@ export class Game {
     }
   }
 
+  private transmitCulture(): void {
+    const culturalTraits: (keyof import("./simulation/types.ts").CultureTraits)[] = ["cooperation", "curiosity", "mobility", "stewardship", "resilience"];
+    const strategyKey = (trait: keyof import("./simulation/types.ts").CultureTraits): keyof import("./simulation/households.ts").BehavioralStrategy =>
+      trait === "mobility" ? "culturalMobility" : trait;
+    const regionPeople = new Map<string, Person[]>();
+    for (const person of this.people) {
+      const key = person.tribe ? person.islandId : "player";
+      const group = regionPeople.get(key) ?? [];
+      group.push(person);
+      regionPeople.set(key, group);
+    }
+    for (const group of regionPeople.values()) {
+      if (group.length < 2) continue;
+      const ageWeight = (p: Person) => Math.min(1, Math.max(0, p.age - 16) / 5);
+      for (const person of group) {
+        const neighbors = group.filter(n => n.id !== person.id);
+        const totalWeight = neighbors.reduce((s, n) => s + ageWeight(n), 0);
+        if (totalWeight < 0.01) continue;
+        let prestigious: Person | null = null;
+        let bestPrestige = -Infinity;
+        for (const n of neighbors) {
+          if (n.age < 25) continue;
+          const prestige = -this.households.hardshipFor(n.id);
+          if (prestige > bestPrestige) { prestigious = n; bestPrestige = prestige; }
+        }
+        for (const trait of culturalTraits) {
+          const sKey = strategyKey(trait);
+          const weightedMean = neighbors.reduce((s, n) => s + n.strategy[sKey] * ageWeight(n), 0) / totalWeight;
+          const conformistPull = (weightedMean - person.strategy[sKey]) * 0.08;
+          const prestigePull = prestigious ? (prestigious.strategy[sKey] - person.strategy[sKey]) * 0.04 : 0;
+          (person.strategy as Record<string, number>)[sKey] = Math.max(0, Math.min(1, person.strategy[sKey] + conformistPull + prestigePull));
+        }
+      }
+    }
+  }
+
+  private computeAggregateCulturalTraits(people: readonly Person[]): import("./simulation/types.ts").CultureTraits {
+    if (people.length === 0) return { cooperation: 0.45, curiosity: 0.4, mobility: 0.35, stewardship: 0.4, resilience: 0.45 };
+    const sum = { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 };
+    for (const person of people) {
+      sum.cooperation += person.strategy.cooperation;
+      sum.curiosity += person.strategy.curiosity;
+      sum.mobility += person.strategy.culturalMobility;
+      sum.stewardship += person.strategy.stewardship;
+      sum.resilience += person.strategy.resilience;
+    }
+    const n = people.length;
+    return { cooperation: sum.cooperation / n, curiosity: sum.curiosity / n, mobility: sum.mobility / n, stewardship: sum.stewardship / n, resilience: sum.resilience / n };
+  }
+
   private checkCatastrophe(_year: number): void {
     if (this.catastrophe && !this.catastrophe.resolved) return;
     this.catastrophe = null;
@@ -3899,7 +3954,7 @@ export class Game {
       capacity: simulation.populationCapacity,
       health: Math.round(simulation.health * 100),
       land: this.spacecraftMode ? Math.round(this.hullIntegrity) : Math.round(((simulation.ecology.soil + simulation.ecology.forest + simulation.ecology.fish) / 3) * 100),
-      culture: `${simulation.culture.language.dialect} · ${simulation.culture.practices[0] ?? "unsettled custom"}`,
+      culture: `${simulation.culture.language.dialect} · ${simulation.culture.practices[0] ?? "unsettled custom"} · BCD ${(simulation.bioculturalDiversity * 100).toFixed(0)}%`,
       outlook,
       cause,
       scenario: this.spacecraftMode ? "spacecraft" : "planet",

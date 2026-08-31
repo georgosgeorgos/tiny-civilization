@@ -2,6 +2,11 @@ export type BehavioralStrategy = {
   mobility: number;
   reserve: number;
   tradeOpenness: number;
+  cooperation: number;
+  curiosity: number;
+  culturalMobility: number;
+  stewardship: number;
+  resilience: number;
 };
 
 export type HouseholdResident = {
@@ -54,6 +59,11 @@ export function initialBehavioralStrategy(seed: number): BehavioralStrategy {
     mobility: 0.25 + noise(seed, 1) * 0.5,
     reserve: 0.25 + noise(seed, 2) * 0.5,
     tradeOpenness: 0.25 + noise(seed, 3) * 0.5,
+    cooperation: 0.35 + noise(seed, 4) * 0.3,
+    curiosity: 0.3 + noise(seed, 5) * 0.35,
+    culturalMobility: 0.28 + noise(seed, 6) * 0.38,
+    stewardship: 0.32 + noise(seed, 7) * 0.34,
+    resilience: 0.35 + noise(seed, 8) * 0.32,
   };
 }
 
@@ -64,6 +74,11 @@ export function inheritBehavioralStrategy(parent: BehavioralStrategy, seed: numb
     mobility: clamp(parent.mobility + (noise(seed, 11) - 0.5) * 0.14),
     reserve: clamp(parent.reserve + (noise(seed, 12) - 0.5) * 0.14),
     tradeOpenness: clamp(parent.tradeOpenness + (noise(seed, 13) - 0.5) * 0.14),
+    cooperation: clamp(parent.cooperation + (noise(seed, 14) - 0.5) * 0.06),
+    curiosity: clamp(parent.curiosity + (noise(seed, 15) - 0.5) * 0.06),
+    culturalMobility: clamp(parent.culturalMobility + (noise(seed, 16) - 0.5) * 0.06),
+    stewardship: clamp(parent.stewardship + (noise(seed, 17) - 0.5) * 0.06),
+    resilience: clamp(parent.resilience + (noise(seed, 18) - 0.5) * 0.06),
   };
 }
 
@@ -71,7 +86,14 @@ const blendStrategy = (current: BehavioralStrategy, exemplar: BehavioralStrategy
   mobility: current.mobility + (exemplar.mobility - current.mobility) * amount,
   reserve: current.reserve + (exemplar.reserve - current.reserve) * amount,
   tradeOpenness: current.tradeOpenness + (exemplar.tradeOpenness - current.tradeOpenness) * amount,
+  cooperation: current.cooperation + (exemplar.cooperation - current.cooperation) * amount,
+  curiosity: current.curiosity + (exemplar.curiosity - current.curiosity) * amount,
+  culturalMobility: current.culturalMobility + (exemplar.culturalMobility - current.culturalMobility) * amount,
+  stewardship: current.stewardship + (exemplar.stewardship - current.stewardship) * amount,
+  resilience: current.resilience + (exemplar.resilience - current.resilience) * amount,
 });
+
+const emptyStrategy: BehavioralStrategy = { mobility: 0, reserve: 0, tradeOpenness: 0, cooperation: 0, curiosity: 0, culturalMobility: 0, stewardship: 0, resilience: 0 };
 
 const meanStrategy = (strategies: readonly BehavioralStrategy[]): BehavioralStrategy => {
   const count = Math.max(1, strategies.length);
@@ -79,7 +101,12 @@ const meanStrategy = (strategies: readonly BehavioralStrategy[]): BehavioralStra
     mobility: mean.mobility + strategy.mobility / count,
     reserve: mean.reserve + strategy.reserve / count,
     tradeOpenness: mean.tradeOpenness + strategy.tradeOpenness / count,
-  }), { mobility: 0, reserve: 0, tradeOpenness: 0 });
+    cooperation: mean.cooperation + strategy.cooperation / count,
+    curiosity: mean.curiosity + strategy.curiosity / count,
+    culturalMobility: mean.culturalMobility + strategy.culturalMobility / count,
+    stewardship: mean.stewardship + strategy.stewardship / count,
+    resilience: mean.resilience + strategy.resilience / count,
+  }), { ...emptyStrategy });
 };
 
 /**

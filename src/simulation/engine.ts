@@ -2,7 +2,7 @@ import type { BuildingId } from "../buildings.ts";
 import { SeededRandom } from "./random.ts";
 import { CellularEcology } from "./cellular.ts";
 import { evolveSociety } from "./evolution.ts";
-import { createCulture, evolveCulture } from "./culture.ts";
+import { createCulture, evolvePracticesAndLanguage } from "./culture.ts";
 import { ClimateSystem } from "./climate.ts";
 import { evolveInstitutions, institutionEffects } from "./institutions.ts";
 import { evolveInnovations, innovationEffects } from "./innovation.ts";
@@ -41,6 +41,7 @@ export class SimulationEngine {
       habitatDiversity: 0.7,
       settlementFootprint: 0,
       era: "Camp",
+      capabilities: { agricultural: 0, maritime: 0, institutional: 0, extractive: 0, ecological: 0 },
       populationCapacity: 1,
       populationTrend: 0,
       institutionalStrength: 0,
@@ -50,6 +51,7 @@ export class SimulationEngine {
       institutions: { forms: [], legitimacy: 0.38, commonReserve: 0, inequality: 0.1 },
       innovations: { techniques: [], provenance: {} },
       originCrisis: null,
+      bioculturalDiversity: 0.5,
       diseaseOutbreak: false,
       pandemic: null,
       alienContact: null,
@@ -91,6 +93,7 @@ export class SimulationEngine {
     const recoveryYears = Math.min(span, 80);
     const climate = this.climate.advance(span);
     this.updateEcology(inputs.buildings, inputs.disruption, recoveryYears, climate);
+    this.updateBioculturalDiversity();
     const foodNeed = inputs.population * 1.5;
     const crisisRules = this.crisisRules();
     const foodProduction = inputs.annualProduction.food * institutionRules.labor * innovationRules.food * crisisRules.food * this.state.ecology.soil * (0.36 + this.state.ecology.water * 0.28 + this.state.cropHealth * 0.2 + climate.rainfall * 0.16);
@@ -114,8 +117,9 @@ export class SimulationEngine {
     const diseaseBurden = this.diseaseBurden(inputs, institutionRules.healthProtection + innovationRules.healthProtection);
     const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 - crowding - disaster - diseaseBurden * 0.5);
     const stabilityTarget = clamp01(this.state.stability + inputs.moodPressure * 0.22 + infrastructure * 0.12 + institutionRules.stability - crowding - disaster * 0.75 - diseaseBurden * 0.035);
+    const bcdDeep = 1 + (this.state.bioculturalDiversity - 0.5) * 0.4;
     const convergence = 1 - Math.exp(-span * 0.45);
-    this.state.health += (healthTarget - this.state.health) * convergence;
+    this.state.health += (healthTarget - this.state.health) * convergence * bcdDeep;
     this.state.stability += (stabilityTarget - this.state.stability) * convergence;
     this.state.cropHealth += (clamp01(0.78 + this.state.ecology.soil * 0.28 - disaster * 1.8) - this.state.cropHealth) * convergence;
     this.state.birthReadiness = clamp01((this.state.health - 0.5) * 1.8 + (this.state.stability - 0.5) * 0.35);
@@ -174,8 +178,9 @@ export class SimulationEngine {
     const crowding = inputs.population > inputs.housing ? 0.18 : 0;
     const disaster = (inputs.disruption === "none" ? 0 : inputs.disruption === "storm" ? 0.04 : 0.09) + climate.drought * 0.04 + climate.floodRisk * 0.025;
     const diseaseBurden = this.diseaseBurden(inputs, institutionRules.healthProtection + innovationRules.healthProtection);
+    const bcdMultiplier = 1 + (this.state.bioculturalDiversity - 0.5) * 0.4;
     const healthTarget = clamp01(0.32 + foodSecurity * 0.62 + infrastructure * 0.045 + institutionRules.stability * 0.08 - crowding - disaster - diseaseBurden * 0.5);
-    this.state.health += (healthTarget - this.state.health) * Math.min(1, 0.16 * stepDays);
+    this.state.health += (healthTarget - this.state.health) * Math.min(1, 0.16 * stepDays * bcdMultiplier);
     const noise = (this.random.next() - 0.5) * 0.012 * Math.sqrt(stepDays);
     this.state.stability = clamp01(this.state.stability + (inputs.moodPressure * 0.015 + infrastructure * 0.008 - crowding * 0.08 - disaster * 0.12 - diseaseBurden * 0.009) * stepDays + noise);
     const spareHousing = inputs.housing <= 0 ? 0 : clamp01((inputs.housing - inputs.population) / Math.max(2, inputs.housing));
@@ -185,6 +190,7 @@ export class SimulationEngine {
     this.state.seasonalStress = clamp01(this.state.seasonalStress + (disaster * 0.5 + (1 - foodSecurity) * 0.08 - 0.035) * stepDays);
     this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate, inputs.diseaseImport ?? 0);
     this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
+    this.updateBioculturalDiversity();
     this.state.climate = climate;
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
     const elderBonus = this.state.demographics.elders * 0.6 * (this.state.institutions.forms.includes("elders") ? 1.4 : 1);
@@ -202,7 +208,7 @@ export class SimulationEngine {
 
   private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate, diseaseImport = 0): void {
     const ecology: Ecology = this.state.ecology;
-    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate, diseaseImport);
+    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate, diseaseImport, this.state.culture.practices);
     ecology.soil = cellular.soil;
     ecology.forest = cellular.forest;
     ecology.fish = cellular.fish;
@@ -245,8 +251,10 @@ export class SimulationEngine {
       stores: this.state.stores,
       culture: this.state.culture,
       inputs,
+      innovations: this.state.innovations,
     });
     this.state.era = evolution.era;
+    this.state.capabilities = evolution.capabilities;
     this.state.populationCapacity = evolution.populationCapacity;
     this.state.populationTrend = evolution.populationTrend;
     this.state.institutionalStrength = evolution.institutionalStrength;
@@ -254,7 +262,10 @@ export class SimulationEngine {
   }
 
   private updateCulture(inputs: SimulationInputs, elapsedYears: number): void {
-    this.state.culture = evolveCulture(this.state.culture, {
+    if (inputs.aggregateTraits) {
+      this.state.culture.traits = { ...inputs.aggregateTraits };
+    }
+    this.state.culture = evolvePracticesAndLanguage(this.state.culture, {
       elapsedDays: this.state.elapsedDays,
       ecology: this.state.ecology,
       landscape: {
@@ -424,6 +435,19 @@ export class SimulationEngine {
       outcome: null,
       culturalImpact: 0,
     };
+  }
+
+  private updateBioculturalDiversity(): void {
+    const culture = this.state.culture;
+    const ecology = this.state.ecology;
+    const linguisticDiv = clamp01(
+      0.3 + culture.language.boundary * 0.4
+      + (culture.language.dialect !== culture.language.family ? 0.2 : 0)
+      + culture.language.lexicon.filter(w => w.includes("memory")).length * 0.05
+    );
+    const practiceDiv = clamp01(culture.practices.length / 8);
+    const ecologicalDiv = (ecology.soil + ecology.forest + ecology.fish + ecology.water) / 4;
+    this.state.bioculturalDiversity = Math.cbrt(linguisticDiv * practiceDiv * ecologicalDiv);
   }
 
   private releaseFamineBuffer(population: number): void {

@@ -1,11 +1,21 @@
 import type { BuildingId } from "../buildings.ts";
 import type { CellularMetrics } from "./cellular.ts";
+import type { InnovationState, Technique } from "./innovation.ts";
 import type { CulturalState, Ecology, SimulationInputs, Stores } from "./types.ts";
 
 export type EvolutionEra = "Camp" | "Agrarian" | "Maritime" | "Civic" | "Industrial" | "Adaptive" | "Orbital";
 
+export type Capabilities = {
+  agricultural: number;
+  maritime: number;
+  institutional: number;
+  extractive: number;
+  ecological: number;
+};
+
 export type EvolutionState = {
   era: EvolutionEra;
+  capabilities: Capabilities;
   populationCapacity: number;
   populationTrend: number;
   institutionalStrength: number;
@@ -21,6 +31,7 @@ type EvolutionContext = {
   stores: Stores;
   culture: CulturalState;
   inputs: SimulationInputs;
+  innovations: InnovationState;
 };
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
@@ -57,12 +68,35 @@ export function evolveSociety(context: EvolutionContext): EvolutionState {
     1,
   );
 
-  let era: EvolutionEra = "Camp";
-  if (foodWorks >= 2 && inputs.population >= 5 && knowledge >= (origin === "farmers" ? 4 : 8)) era = "Agrarian";
-  if (era !== "Camp" && inputs.infrastructure.ports + inputs.infrastructure.tradeRoutes >= 1 && inputs.buildings.market >= 1 && knowledge >= 28) era = "Maritime";
-  if (institutions >= 2 && inputs.population >= (origin === "city" ? 8 : 12) && stability >= (origin === "city" ? 0.48 : 0.58) && knowledge >= (origin === "city" ? 45 : 70)) era = "Civic";
-  if (era === "Civic" && extractiveWorks >= 3 && inputs.buildings.forge >= 1 && knowledge >= 150) era = "Industrial";
-  if (era === "Industrial" && institutionalStrength >= 0.72 && landscape.habitatDiversity >= 0.48 && knowledge >= 320) era = "Adaptive";
-  if (origin === "spacecraft" && era !== "Adaptive") era = "Orbital";
-  return { era, populationCapacity, populationTrend, institutionalStrength, migrationPressure };
+  const has = (t: Technique) => context.innovations.techniques.includes(t);
+  const capabilities: Capabilities = {
+    agricultural: clamp(foodWorks * 0.15 + ecology.soil * 0.2
+      + (has("seed-selection") ? 0.1 : 0) + (has("crop-rotation") ? 0.1 : 0)
+      + (has("irrigation") ? 0.12 : 0) + (has("terracing") ? 0.06 : 0), 0, 1),
+    maritime: clamp(inputs.infrastructure.ports * 0.2 + inputs.infrastructure.tradeRoutes * 0.2
+      + (has("coastal-navigation") ? 0.12 : 0) + (has("sailcraft") ? 0.15 : 0)
+      + (has("harbor-engineering") ? 0.1 : 0), 0, 1),
+    institutional: clamp(institutions * 0.14 + stability * 0.18 + connectedness * 0.15
+      + (has("ledger") ? 0.08 : 0) + (has("codified-law") ? 0.1 : 0)
+      + (has("public-archive") ? 0.1 : 0), 0, 1),
+    extractive: clamp(extractiveWorks * 0.12 + (has("metallurgy") ? 0.18 : 0)
+      + (has("masonry") ? 0.1 : 0) + ecology.minerals * 0.1, 0, 1),
+    ecological: clamp(landscape.habitatDiversity * 0.25 + culture.traits.stewardship * 0.2
+      + (has("soil-restoration") ? 0.12 : 0) + (has("forestry-management") ? 0.12 : 0)
+      + (has("waterworks") ? 0.08 : 0), 0, 1),
+  };
+
+  const sorted = Object.entries(capabilities).sort(([, a], [, b]) => b - a);
+  const [topCap, topValue] = sorted[0] as [string, number];
+  const secondValue = (sorted[1] as [string, number] | undefined)?.[1] ?? 0;
+  const gap = topValue - secondValue;
+  let era: EvolutionEra = (topValue < 0.25 || gap < 0.05) ? "Camp"
+    : topCap === "agricultural" ? "Agrarian"
+    : topCap === "maritime" ? "Maritime"
+    : topCap === "institutional" ? "Civic"
+    : topCap === "extractive" ? "Industrial"
+    : topCap === "ecological" ? "Adaptive"
+    : "Camp";
+  if (origin === "spacecraft") era = "Orbital";
+  return { era, capabilities, populationCapacity, populationTrend, institutionalStrength, migrationPressure };
 }

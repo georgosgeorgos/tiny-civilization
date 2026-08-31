@@ -43,26 +43,18 @@ export function createCulture(seed: number): CulturalState {
 }
 
 /**
- * Cultural traits are inherited tendencies, not a command queue. Ecology and
- * social outcomes bias which tendencies survive; periodic small mutations
- * preserve divergence between otherwise similar settlements.
+ * Evolve practices and language based on the society's aggregate cultural
+ * traits. Trait values are read-only inputs (driven by individual
+ * transmission in the render layer); this function only discovers practices,
+ * evolves language, and applies generational mutation to trait noise.
  */
-export function evolveCulture(current: CulturalState, context: CultureContext, random: SeededRandom, elapsedYears: number): CulturalState {
+export function evolvePracticesAndLanguage(current: CulturalState, context: CultureContext, random: SeededRandom, elapsedYears: number): CulturalState {
   const traits = { ...current.traits };
   const span = Math.max(1 / 96, Math.min(80, elapsedYears));
   const adaptation = 1 - Math.exp(-span * 0.22);
   const foodSecurity = clamp(context.stores.food / Math.max(2, context.inputs.population * 2.5));
   const scarcity = 1 - foodSecurity;
   const disruption = context.inputs.disruption === "none" ? 0 : context.inputs.disruption === "storm" ? 0.28 : 0.6;
-  const influence = context.inputs.culturalInfluence ?? {};
-  const targets: CultureTraits = {
-    cooperation: clamp(0.22 + context.stability * 0.42 + scarcity * 0.25 + (influence.cooperation ?? traits.cooperation) * 0.11),
-    curiosity: clamp(0.16 + Math.min(1, context.inputs.buildings.market * 0.18 + context.inputs.buildings.shrine * 0.1 + context.inputs.infrastructure.tradeRoutes * 0.18) + (influence.curiosity ?? traits.curiosity) * 0.14),
-    mobility: clamp(0.12 + context.inputs.infrastructure.ports * 0.19 + context.inputs.infrastructure.tradeRoutes * 0.2 + context.inputs.moodPressure * -0.08 + scarcity * 0.28 + (influence.mobility ?? traits.mobility) * 0.1),
-    stewardship: clamp(0.18 + (1 - context.ecology.soil) * 0.35 + (1 - context.ecology.forest) * 0.2 + context.landscape.settlementFootprint * 0.16 + (influence.stewardship ?? traits.stewardship) * 0.12),
-    resilience: clamp(0.22 + disruption * 0.45 + scarcity * 0.25 + (1 - context.health) * 0.18 + context.ecology.disease * 0.18 + (influence.resilience ?? traits.resilience) * 0.1),
-  };
-  for (const trait of traitNames) traits[trait] = clamp(traits[trait] + (targets[trait] - traits[trait]) * adaptation);
 
   const generation = Math.floor(context.elapsedDays / 12);
   const mutationCycles = Math.min(32, Math.max(0, generation - current.generation));
@@ -81,7 +73,6 @@ export function evolveCulture(current: CulturalState, context: CultureContext, r
   if (traits.cooperation > 0.62 && traits.curiosity > 0.58 && context.landscape.habitatDiversity > 0.48) practices.add("living commons");
   const retained = [...practices].sort().slice(-6);
   const language = structuredClone(current.language);
-  // Contact softens boundaries; disruption makes identity more protective.
   language.boundary = clamp(language.boundary + (disruption * 0.18 + scarcity * 0.08 - context.inputs.infrastructure.tradeRoutes * 0.06) * adaptation);
   if (mutationCycles > 0) {
     const fragments = ["ka", "mi", "ru", "sa", "tel", "vo", "ya", "zen"];
@@ -92,3 +83,6 @@ export function evolveCulture(current: CulturalState, context: CultureContext, r
   const novelty = retained.length * 0.12 + traitNames.reduce((sum, trait) => sum + Math.abs(traits[trait] - 0.5), 0) * 0.08;
   return { lineage: current.lineage, generation, traits, practices: retained, novelty, language };
 }
+
+/** @deprecated Use evolvePracticesAndLanguage instead. Kept for backward compat with deep-time paths. */
+export const evolveCulture = evolvePracticesAndLanguage;

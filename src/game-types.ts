@@ -5,7 +5,7 @@ import type { TerritorialClaim } from "./world-state";
 import type { PersonRole } from "./models";
 import type { BehavioralStrategy } from "./simulation/households";
 import type { DevelopmentStage } from "./civilization";
-import type { EvolutionEra } from "./simulation/evolution";
+import type { Capabilities, EvolutionEra } from "./simulation/evolution";
 import type { CulturalState, CultureTraits } from "./simulation/types";
 import type { DiplomaticChannel } from "./simulation/diplomacy";
 import type { SimulationConfig } from "./config";
@@ -77,6 +77,7 @@ export type Society = {
   populationCapacity: number;
   migrationPressure: number;
   era: EvolutionEra;
+  capabilities: Capabilities;
   culture: CulturalState;
   culturalInfluence: Partial<CultureTraits>;
   diplomacy: DiplomaticChannel;

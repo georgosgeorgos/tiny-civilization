@@ -1,6 +1,6 @@
 import type { BuildingId } from "../buildings.ts";
 import type { Origin } from "../config.ts";
-import type { EvolutionEra } from "./evolution.ts";
+import type { Capabilities, EvolutionEra } from "./evolution.ts";
 import type { ClimateForcing } from "./climate.ts";
 import type { InstitutionState } from "./institutions.ts";
 import type { InnovationState } from "./innovation.ts";
@@ -77,6 +77,7 @@ export type SimulationSnapshot = {
   habitatDiversity: number;
   settlementFootprint: number;
   era: EvolutionEra;
+  capabilities: Capabilities;
   populationCapacity: number;
   populationTrend: number;
   institutionalStrength: number;
@@ -86,6 +87,7 @@ export type SimulationSnapshot = {
   institutions: InstitutionState;
   innovations: InnovationState;
   originCrisis: OriginCrisis | null;
+  bioculturalDiversity: number;
   diseaseOutbreak: boolean;
   pandemic: PandemicState | null;
   alienContact: AlienContactState | null;
@@ -111,6 +113,8 @@ export type SimulationInputs = {
   origin?: Origin;
   /** When provided from actual person ages, replaces the flat demographic ratios. */
   demographics?: Demographics;
+  /** When provided from per-person cultural weights, overrides engine trait evolution. */
+  aggregateTraits?: CultureTraits;
 };
 
 export type RegionSimulationInput = {

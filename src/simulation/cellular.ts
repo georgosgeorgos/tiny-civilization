@@ -67,7 +67,7 @@ export class CellularEcology {
     }
   }
 
-  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing, diseaseImport = 0): CellularMetrics {
+  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing, diseaseImport = 0, practices: string[] = []): CellularMetrics {
     // Long-horizon simulation converges in bounded batches rather than replaying every day.
     const iterations = Math.max(1, Math.min(240, Math.ceil(days * 2)));
     const dt = Math.min(0.5, days / iterations);
@@ -101,6 +101,13 @@ export class CellularEcology {
     const drought = Math.max(disruption === "drought" ? 0.68 : 0, climate?.drought ?? 0);
     const flood = Math.max(disruption === "flood" ? 0.6 : 0, climate?.floodRisk ?? 0);
 
+    const practiceSet = new Set(practices);
+    const pSoil = (practiceSet.has("soil-rest covenant") ? 0.032 : 0) + (practiceSet.has("living commons") ? 0.018 : 0) + (practiceSet.has("soil-restoration") ? 0.022 : 0);
+    const pForest = (practiceSet.has("living commons") ? 0.014 : 0) + (practiceSet.has("forestry-management") ? 0.028 : 0);
+    const pFish = practiceSet.has("wayfinding compact") ? 0.012 : 0;
+    const pWater = practiceSet.has("storm ledger") ? 0.012 : 0;
+    const pDisease = (practiceSet.has("common granary") ? -0.015 : 0) + (practiceSet.has("open archive") ? -0.008 : 0) + (practiceSet.has("plague-memory") ? -0.025 : 0);
+
     for (let step = 0; step < iterations; step += 1) {
       for (let i = 0; i < length; i += 1) {
         const neighbours = this.neighbourMean(i);
@@ -113,17 +120,18 @@ export class CellularEcology {
         const fishPressure = regionalFishPressure + (use === LAND_USE.fishery ? (1 - stewardship * 0.2) : 0);
         const minePressure = regionalMinePressure + (use === LAND_USE.mine ? 1 : 0);
         const buildingHere = use === 0 ? 0 : Math.max(0, 0.25 + suitability * 1.6 - localSettlement * 0.04);
-        soilNext[i] = clamp(this.soil[i] + dt * (0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
-        forestNext[i] = clamp(this.forest[i] + dt * (0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
-        fishNext[i] = clamp(this.fish[i] + dt * (0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
+        soilNext[i] = clamp(this.soil[i] + dt * (0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 + pSoil - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
+        forestNext[i] = clamp(this.forest[i] + dt * (0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 + pForest - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
+        const fishPractice = pFish * (coast ? 1 : 0.5);
+        fishNext[i] = clamp(this.fish[i] + dt * (0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 + fishPractice - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
         waterNext[i] = clamp(this.water[i] + dt * (
-          0.024 * suitability + 0.065 * (neighbours.water - this.water[i]) + coast * 0.028 + stewardship * 0.006 -
+          0.024 * suitability + 0.065 * (neighbours.water - this.water[i]) + coast * 0.028 + stewardship * 0.006 + pWater -
           farmPressure * (0.16 + suitability * 0.18) + rainfall * 0.025 - drought * 0.18 - localSettlement * 0.011
         ));
         const mineralRecovery = use !== LAND_USE.mine ? 0.0001 : 0;
         mineralsNext[i] = clamp(this.minerals[i] + dt * (0.0025 * suitability + mineralRecovery + 0.005 * (neighbours.minerals - this.minerals[i]) - minePressure * (0.45 + suitability * 0.3)));
         diseaseNext[i] = clamp(this.disease[i] + dt * (
-          localSettlement * (0.035 + (1 - this.water[i]) * 0.05) + flood * 0.035 + diseaseImport * 0.12 -
+          localSettlement * (0.035 + (1 - this.water[i]) * 0.05) + flood * 0.035 + diseaseImport * 0.12 + pDisease -
           this.disease[i] * (0.06 + cooperation * 0.025 + resilience * 0.018)
         ));
         settlementNext[i] = clamp(localSettlement + dt * (buildingHere * (1.12 + cooperation * 0.45) - (1 - suitability) * 0.015 - disaster * 0.09));
