@@ -22,12 +22,16 @@ export type NetworkRegion = {
   terrainCost?: number;
   culture?: CultureTraits;
   language?: LanguageState;
+  /** Aggregate disease burden from the cellular ecology, 0-1. */
+  diseaseRisk?: number;
+  /** Institutional and innovation protection against imported disease, 0-1. */
+  healthProtection?: number;
 };
 
-export type NetworkEffect = { food: number; wood: number; gold: number; knowledge: number; stability: number; migrants: number; culture: CultureTraits };
+export type NetworkEffect = { food: number; wood: number; gold: number; knowledge: number; stability: number; migrants: number; culture: CultureTraits; diseaseImport: number };
 export type NetworkConnection = "none" | "parley" | "trade";
 
-const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, stability: 0, migrants: 0, culture: { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 } });
+const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, stability: 0, migrants: 0, culture: { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 }, diseaseImport: 0 });
 
 /**
  * Resource exchange, cultural diffusion and migration emerge from proximity
@@ -114,6 +118,11 @@ export function exchangeRegions(
         originEffect.gold += migrants * 0.08;
         destinationEffect.gold -= migrants * 0.08;
       }
+      const fromDisease = from.diseaseRisk ?? 0;
+      const toDisease = to.diseaseRisk ?? 0;
+      const diseaseFactor = mode === "trade" ? 0.08 : 0.024;
+      fromEffect.diseaseImport += diseaseFactor * toDisease * (1 - Math.min(1, from.healthProtection ?? 0)) * strength;
+      toEffect.diseaseImport += diseaseFactor * fromDisease * (1 - Math.min(1, to.healthProtection ?? 0)) * strength;
     }
   }
   // A trade graph should have consequences beyond isolated pairs. A single,

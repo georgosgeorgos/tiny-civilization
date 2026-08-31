@@ -53,6 +53,8 @@ import { developmentStage, isUnlocked, specialtyFor, type DevelopmentStage } fro
 import { goalCopy, type SimulationConfig } from "./config";
 import { createCosmicSystem, type CosmicSystem } from "./cosmos";
 import { DIRECTIVE_COPY, directivesFromText, speedFromText, yearsFromText, type Directive } from "./directive";
+import { institutionEffects } from "./simulation/institutions.ts";
+import { innovationEffects } from "./simulation/innovation.ts";
 import { SimulationClient } from "./simulation/client.ts";
 import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInputs } from "./simulation/types.ts";
 import type { EvolutionEra } from "./simulation/evolution.ts";
@@ -290,6 +292,8 @@ export class Game {
   private technology = 0;
   private hullIntegrity = 97;
   private culturalInfluence: Partial<CultureTraits> = {};
+  private playerDiseaseImport = 0;
+  private readonly societyDiseaseImport = new Map<string, number>();
   private weather: Weather = "clear";
   private weatherUntil = 1.1;
   private readonly weatherPace: number;
@@ -333,6 +337,7 @@ export class Game {
   private readonly chronicle: EventChronicle;
   private readonly directiveHistory: string[] = [];
   private lastSimulationInputs: SimulationInputs | null = null;
+  private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
   private lastOriginCrisis: string | null = null;
   private pointerDown: { x: number; y: number } | null = null;
   private readonly navigationKeys = new Set<string>();
@@ -2291,11 +2296,20 @@ export class Game {
     const defense = player.counts.forge * 0.18 + this.playerInfrastructure().roads * 0.025;
     const diplomacy = player.counts.market * 0.24 + this.simulation.snapshot.institutions.legitimacy * 0.22;
     for (const society of this.societies.values()) {
+      const contested = this.contestedResourcePressure(society);
+      if (contested > 5 && channelSupportsContact(society.diplomacy) && society.diplomacy.trust > 0.4) {
+        const roll = hash2(society.islandId.length, yearFromDays(this.simDays));
+        if (roll > 0.4) {
+          this.splitContestedTerritory(society);
+          this.setHint(`${society.name} negotiated a territorial settlement; contested lands are divided.`);
+          continue;
+        }
+      }
       const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
       const result = resolveConflict({
         relation: society.relation,
         scarcity: Math.max(0, 1 - society.food / Math.max(3, population * 2.5)),
-        grievance: Math.max(0, -society.relation / 45),
+        grievance: Math.max(0, -society.relation / 45) + contested * 0.04,
         defense,
         diplomacy,
       });
@@ -2304,6 +2318,49 @@ export class Game {
       society.food *= result.foodMultiplier;
       this.mood = THREE.MathUtils.clamp(this.mood + result.stabilityDelta * 100, 0, 100);
       this.setHint(`${society.name}: ${result.outcome} follows regional grievance and bargaining.`);
+    }
+  }
+
+  private contestedResourcePressure(society: Society): number {
+    let pressure = 0;
+    for (const tile of this.tiles.values()) {
+      if (tile.territory !== "contested") continue;
+      if (tile.contestedWith !== society.islandId && tile.claimant !== society.islandId) continue;
+      pressure += 1;
+      if (tile.building) pressure += 3;
+      if (tile.building === "fishery" || tile.building === "mine") pressure += 2;
+    }
+    return pressure;
+  }
+
+  private splitContestedTerritory(society: Society): void {
+    const [societyQ, societyR] = society.islandId.split(",").map(Number);
+    let playerClaimed = 0;
+    let societyClaimed = 0;
+    for (const tile of this.tiles.values()) {
+      if (tile.territory === "none" || tile.territory === "contested") continue;
+      if (tile.claimant === "player") playerClaimed += 1;
+      else if (tile.claimant === society.islandId) societyClaimed += 1;
+    }
+    for (const tile of this.tiles.values()) {
+      if (tile.territory !== "contested") continue;
+      if (tile.contestedWith !== society.islandId && tile.claimant !== society.islandId) continue;
+      const distToPlayer = hexDistance(tile.q, tile.r);
+      const distToSociety = hexDistance(tile.q - societyQ, tile.r - societyR);
+      const goesToPlayer = distToPlayer < distToSociety || (distToPlayer === distToSociety && playerClaimed <= societyClaimed);
+      tile.territory = "economic";
+      tile.contestedWith = null;
+      if (goesToPlayer) {
+        tile.claimant = "player";
+        if (!tile.owner) tile.owner = "player";
+        playerClaimed += 1;
+      } else {
+        tile.claimant = society.islandId;
+        if (!tile.owner) tile.owner = "tribe";
+        societyClaimed += 1;
+      }
+      this.paintTerritory(tile);
+      this.persistTile(tile);
     }
   }
 
@@ -2417,6 +2474,7 @@ export class Game {
       }
       this.setHint(`Year ${year} begins. Stores are counted and shared.`);
       this.captureChronicleCheckpoint(year);
+      this.advanceAges(year);
     }
 
     this.tickConstruction(simDt);
@@ -2609,6 +2667,11 @@ export class Game {
         (this.event === "trade" ? markets * 2.2 : 0) +
         (alliedTowns * markets * 0.45 + this.tradeRoutes.size * markets * 1.25) * this.originProfile.production.gold,
     };
+    const playerDemographics = this.computeDemographics(folk);
+    const depRatio = (playerDemographics.children + playerDemographics.elders) / Math.max(1, playerDemographics.adults);
+    const laborEff = 1 / (1 + depRatio * 0.25);
+    annualProduction.food *= laborEff;
+    annualProduction.wood *= laborEff;
     const snap = this.civSnapshot();
     const disruption = this.event === "drought" || this.event === "flood" || this.event === "wildfire" || this.event === "ash"
       ? this.event
@@ -2625,7 +2688,9 @@ export class Game {
       disruption: this.spacecraftMode && this.hullIntegrity < 38 ? "storm" : disruption,
       fidelity: "local",
       culturalInfluence: this.culturalInfluence,
+      diseaseImport: this.playerDiseaseImport,
       origin: this.origin,
+      demographics: playerDemographics,
     };
     this.lastSimulationInputs = localInputs;
     const simulated = this.simulation.advance(localInputs);
@@ -2657,9 +2722,12 @@ export class Game {
       }
       if (society.food < 1 && tribe.length > 0) tribeHappiness -= 16;
       if (tribe.length > tribeHousing) tribeHappiness -= 10;
+      const tribeDemographics = this.computeDemographics(tribe);
+      const tribeDepRatio = (tribeDemographics.children + tribeDemographics.elders) / Math.max(1, tribeDemographics.adults);
+      const tribeLaborEff = 1 / (1 + tribeDepRatio * 0.25);
       const annual = {
-        food: yieldNow.food / Math.max(deltaYears, 0.000001),
-        wood: yieldNow.wood / Math.max(deltaYears, 0.000001) + 0.35,
+        food: yieldNow.food / Math.max(deltaYears, 0.000001) * tribeLaborEff,
+        wood: yieldNow.wood / Math.max(deltaYears, 0.000001) * tribeLaborEff + 0.35,
         gold: yieldNow.gold / Math.max(deltaYears, 0.000001) + 0.4 + (society.relation <= -14 ? 0.7 : 0),
       };
       regionalInputs.push({
@@ -2677,6 +2745,8 @@ export class Game {
           disruption,
           fidelity: "remote",
           culturalInfluence: society.culturalInfluence,
+          diseaseImport: this.societyDiseaseImport.get(society.islandId) ?? 0,
+          demographics: tribeDemographics,
         },
       });
       society.stage = developmentStage(tribe.length, [...this.tiles.values()].filter(
@@ -2684,6 +2754,7 @@ export class Game {
       ).length);
     }
     const regionalSnapshots = this.simulation.advanceRegions(regionalInputs);
+    this.lastRegionalSnapshots = regionalSnapshots;
     for (const society of this.societies.values()) {
       const remote = regionalSnapshots.get(society.islandId);
       if (!remote) continue;
@@ -2806,7 +2877,12 @@ export class Game {
     );
     if (workers.length === 0) return 0;
     const present = workers.filter((person) => !person.sleeping && person.q === tile.q && person.r === tile.r).length;
-    return 0.12 + 0.88 * (present / workers.length);
+    let factor = 0.12 + 0.88 * (present / workers.length);
+    const outbreak = tile.owner === "player"
+      ? this.simulation.snapshot.diseaseOutbreak
+      : this.lastRegionalSnapshots.get(tile.islandId)?.diseaseOutbreak ?? false;
+    if (outbreak) factor *= 0.7;
+    return factor;
   }
 
   private playerInfrastructure(): { roads: number; ports: number; tradeRoutes: number } {
@@ -2852,6 +2928,9 @@ export class Game {
     const player = this.civSnapshot();
     const playerSim = this.simulation.snapshot;
     const playerInfrastructure = this.playerInfrastructure();
+    const playerInstEffects = institutionEffects(playerSim.institutions);
+    const playerInnovEffects = innovationEffects(playerSim.innovations);
+    const playerHealthProtection = playerInstEffects.healthProtection + playerInnovEffects.healthProtection;
     const regions: NetworkRegion[] = [{
       id: "player", q: 0, r: 0, population: player.people, capacity: playerSim.populationCapacity,
       food: this.food, wood: this.wood, gold: this.gold, knowledge: this.technology,
@@ -2862,10 +2941,17 @@ export class Game {
       terrainCost: this.regionalTerrainCost("player"),
       culture: playerSim.culture.traits,
       language: playerSim.culture.language,
+      diseaseRisk: playerSim.ecology.disease,
+      healthProtection: playerHealthProtection,
     }];
     for (const society of this.societies.values()) {
       const [q, r] = society.islandId.split(",").map(Number);
       const tiles = [...this.tiles.values()].filter((tile) => tile.islandId === society.islandId && tile.owner === "tribe" && tile.building);
+      const regionSnap = this.lastRegionalSnapshots.get(society.islandId);
+      const regionDisease = regionSnap?.ecology.disease ?? 0.04;
+      const regionHP = regionSnap
+        ? institutionEffects(regionSnap.institutions).healthProtection + innovationEffects(regionSnap.innovations).healthProtection
+        : 0;
       regions.push({
         id: society.islandId, q, r,
         population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length,
@@ -2878,6 +2964,8 @@ export class Game {
         terrainCost: this.regionalTerrainCost(society.islandId),
         culture: society.culture.traits,
         language: society.culture.language,
+        diseaseRisk: regionDisease,
+        healthProtection: regionHP,
       });
     }
     const effects = exchangeRegions(regions, years, (from, to) => this.networkConnection(from, to));
@@ -2889,6 +2977,7 @@ export class Game {
       this.technology = Math.max(0, this.technology + playerEffect.knowledge);
       this.mood = Math.max(0, Math.min(100, this.mood + playerEffect.stability * 100));
       this.culturalInfluence = this.blendCultureInfluence(this.culturalInfluence, playerEffect.culture);
+      this.playerDiseaseImport = playerEffect.diseaseImport;
     }
     for (const society of this.societies.values()) {
       const effect = effects.get(society.islandId);
@@ -2899,6 +2988,7 @@ export class Game {
       society.knowledge = Math.max(0, society.knowledge + effect.knowledge);
       society.mood = Math.max(0, Math.min(100, society.mood + effect.stability * 100));
       society.culturalInfluence = this.blendCultureInfluence(society.culturalInfluence, effect.culture);
+      this.societyDiseaseImport.set(society.islandId, effect.diseaseImport);
     }
     this.reconcileCommunicationLinks(regions);
     const origins = regions.filter((region) => (effects.get(region.id)?.migrants ?? 0) < 0);
@@ -3079,6 +3169,49 @@ export class Game {
       housing += BUILDINGS[tile.building].housing;
     }
     return housing;
+  }
+
+  private advanceAges(year: number): void {
+    const regionPop = new Map<string, number>();
+    for (const person of this.people) {
+      const key = person.tribe ? person.islandId : "player";
+      regionPop.set(key, (regionPop.get(key) ?? 0) + 1);
+    }
+    const toRemove: number[] = [];
+    for (let i = 0; i < this.people.length; i++) {
+      const person = this.people[i];
+      person.age += 1;
+      if (person.age >= 78) {
+        const regionKey = person.tribe ? person.islandId : "player";
+        if ((regionPop.get(regionKey) ?? 0) <= 6) continue;
+        const mortalityChance = 0.15 + (person.age - 78) * 0.08;
+        if (hash2(person.seed + year * 0.0037, year) < mortalityChance) {
+          toRemove.push(i);
+          regionPop.set(regionKey, (regionPop.get(regionKey) ?? 1) - 1);
+        }
+      }
+    }
+    for (let i = toRemove.length - 1; i >= 0; i--) {
+      const person = this.people[toRemove[i]];
+      this.peopleGroup.remove(person.mesh);
+      this.people.splice(toRemove[i], 1);
+    }
+    if (toRemove.length > 0) {
+      this.assignHomes();
+      this.assignJobs();
+      this.setHint(`${toRemove.length === 1 ? "An elder" : "Elders"} passed away this year.`);
+    }
+  }
+
+  private computeDemographics(people: Person[]): { children: number; adults: number; elders: number } {
+    let adults = 0;
+    let elders = 0;
+    for (const person of people) {
+      if (person.age >= 65) elders += 1;
+      else adults += 1;
+    }
+    const children = Math.round(adults * 0.28);
+    return { children, adults, elders };
   }
 
   private tryBirths(): void {

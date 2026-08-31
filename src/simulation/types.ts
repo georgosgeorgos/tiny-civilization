@@ -66,6 +66,7 @@ export type SimulationSnapshot = {
   institutions: InstitutionState;
   innovations: InnovationState;
   originCrisis: OriginCrisis | null;
+  diseaseOutbreak: boolean;
 };
 
 export type SimulationInputs = {
@@ -82,8 +83,12 @@ export type SimulationInputs = {
   fidelity?: "local" | "remote";
   /** Ideas arriving through exchange alter tendencies gradually; they never prescribe a decision. */
   culturalInfluence?: Partial<CultureTraits>;
+  /** Disease burden imported from connected regions via trade and migration. */
+  diseaseImport?: number;
   /** Starting inheritance changes what this society can stabilize and discover. */
   origin?: Origin;
+  /** When provided from actual person ages, replaces the flat demographic ratios. */
+  demographics?: Demographics;
 };
 
 export type RegionSimulationInput = {

@@ -49,6 +49,7 @@ export class SimulationEngine {
       institutions: { forms: [], legitimacy: 0.38, commonReserve: 0, inequality: 0.1 },
       innovations: { techniques: [], provenance: {} },
       originCrisis: null,
+      diseaseOutbreak: false,
     };
   }
 
@@ -78,7 +79,7 @@ export class SimulationEngine {
   advanceYears(inputs: SimulationInputs, years: number): Readonly<SimulationSnapshot> {
     const span = Math.max(0, Math.min(1_000_000_000, years));
     if (span === 0) return this.state;
-    this.reconcilePopulation(inputs.population);
+    this.reconcilePopulation(inputs.population, inputs.demographics);
     const infrastructure = clamp01(
       inputs.infrastructure.roads * 0.035 + inputs.infrastructure.ports * 0.07 + inputs.infrastructure.tradeRoutes * 0.16,
     );
@@ -131,7 +132,7 @@ export class SimulationEngine {
 
   private step(inputs: SimulationInputs, stepDays: number): void {
     const yearPart = stepDays / DAYS_PER_YEAR;
-    this.reconcilePopulation(inputs.population);
+    this.reconcilePopulation(inputs.population, inputs.demographics);
     const climate = this.climate.advance(stepDays);
     const foodNeed = inputs.population * 1.5 * yearPart;
     const infrastructure = clamp01(
@@ -176,9 +177,14 @@ export class SimulationEngine {
 
     this.state.seasonalStress = clamp01(this.state.seasonalStress + (disaster * 0.5 + (1 - foodSecurity) * 0.08 - 0.035) * stepDays);
     this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate);
+    if (inputs.diseaseImport) {
+      this.state.ecology.disease = clamp01(this.state.ecology.disease + inputs.diseaseImport * 0.5);
+    }
+    this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
     this.state.climate = climate;
     const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
-    this.state.knowledge += (inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge * yearPart * (0.65 + this.state.stability * 0.5);
+    const elderBonus = this.state.demographics.elders * 0.6 * (this.state.institutions.forms.includes("elders") ? 1.4 : 1);
+    this.state.knowledge += ((inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge + elderBonus) * yearPart * (0.65 + this.state.stability * 0.5);
     this.updateCulture(inputs, yearPart);
     this.releaseFamineBuffer(inputs.population);
     this.updateInstitutions(inputs, yearPart);
@@ -201,11 +207,17 @@ export class SimulationEngine {
     this.state.settlementFootprint = cellular.settlementFootprint;
   }
 
-  private reconcilePopulation(total: number): void {
+  private reconcilePopulation(total: number, provided?: Demographics): void {
     const demographics: Demographics = this.state.demographics;
-    demographics.children = Math.round(total * 0.22);
-    demographics.elders = Math.round(total * 0.12);
-    demographics.adults = Math.max(0, total - demographics.children - demographics.elders);
+    if (provided) {
+      demographics.children = provided.children;
+      demographics.adults = provided.adults;
+      demographics.elders = provided.elders;
+    } else {
+      demographics.children = Math.round(total * 0.22);
+      demographics.elders = Math.round(total * 0.12);
+      demographics.adults = Math.max(0, total - demographics.children - demographics.elders);
+    }
   }
 
   private updateEvolution(inputs: SimulationInputs): void {
