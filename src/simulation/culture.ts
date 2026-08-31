@@ -48,7 +48,7 @@ export function createCulture(seed: number): CulturalState {
  * transmission in the render layer); this function only discovers practices,
  * evolves language, and applies generational mutation to trait noise.
  */
-export function evolvePracticesAndLanguage(current: CulturalState, context: CultureContext, random: SeededRandom, elapsedYears: number): CulturalState {
+export function evolvePracticesAndLanguage(current: CulturalState, context: CultureContext, random: SeededRandom, elapsedYears: number, blockedSlots = 0): CulturalState {
   const traits = { ...current.traits };
   const span = Math.max(1 / 96, Math.min(80, elapsedYears));
   const adaptation = 1 - Math.exp(-span * 0.22);
@@ -71,7 +71,8 @@ export function evolvePracticesAndLanguage(current: CulturalState, context: Cult
   if (traits.curiosity > 0.6 && institutionCount >= 2) practices.add("open archive");
   if (traits.resilience > 0.62 && disruption > 0.2) practices.add("storm ledger");
   if (traits.cooperation > 0.62 && traits.curiosity > 0.58 && context.landscape.habitatDiversity > 0.48) practices.add("living commons");
-  const retained = [...practices].sort().slice(-6);
+  const maxPractices = Math.max(0, 6 - blockedSlots);
+  const retained = [...practices].sort().slice(-maxPractices);
   const language = structuredClone(current.language);
   language.boundary = clamp(language.boundary + (disruption * 0.18 + scarcity * 0.08 - context.inputs.infrastructure.tradeRoutes * 0.06) * adaptation);
   if (mutationCycles > 0) {

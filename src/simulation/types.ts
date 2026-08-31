@@ -88,6 +88,7 @@ export type SimulationSnapshot = {
   innovations: InnovationState;
   originCrisis: OriginCrisis | null;
   bioculturalDiversity: number;
+  practiceVulnerability: Record<string, number>;
   diseaseOutbreak: boolean;
   pandemic: PandemicState | null;
   alienContact: AlienContactState | null;

@@ -238,6 +238,8 @@ export class Game {
   private readonly gameRandom!: SeededRandom;
   private catastrophe: CatastropheState | null = null;
   private lastEruptionDay = -Infinity;
+  private readonly lastKnownTechniques = new Set<string>();
+  private readonly techniqueDisruption = new Map<string, number>();
   private pointerDown: { x: number; y: number } | null = null;
   private readonly navigationKeys = new Set<string>();
   private observerMove: {
@@ -1283,6 +1285,7 @@ export class Game {
       seed,
       age: 16 + Math.floor(seed * 40),
       strategy: parent ? inheritBehavioralStrategy(parent.strategy, seed) : initialBehavioralStrategy(seed),
+      knowledgeCarrier: [],
     };
     mesh.position.copy(this.personWorldPos(person, tile, tile, 1));
     mesh.scale.setScalar(0.01);
@@ -1926,6 +1929,7 @@ export class Game {
         if (!site) continue;
         if (this.placeBuilding(site, id, { owner: "tribe", free: true, silent: true, treasury: society })) placed += 1;
       }
+      this.rediscoverRegionInnovations(islandId, society);
       if (placed > 0) {
         this.setHint(`${society.name} keeps a camp on the ${group.kind} isle.`);
       }
@@ -2608,6 +2612,7 @@ export class Game {
       this.captureChronicleCheckpoint(year);
       this.advanceAges(year);
       this.transmitCulture();
+      this.tickTechniqueDisruption();
       this.checkCatastrophe(year);
     }
 
@@ -2736,6 +2741,12 @@ export class Game {
         }
         woodGain = def.woodPerYear * Math.min(1.8, woodMul) * work;
         if (this.event === "wildfire") woodGain *= 0.35;
+      }
+      if (tile.building) {
+        const disruptionPenalty = this.techniqueDisruptionPenalty(tile.building);
+        foodGain *= disruptionPenalty;
+        goldGain *= disruptionPenalty;
+        woodGain *= disruptionPenalty;
       }
       if (tile.owner === "tribe") {
         if (tile.building === specialtyFor(tile.kind)) {
@@ -2915,6 +2926,7 @@ export class Game {
       society.era = remote.era;
       society.capabilities = remote.capabilities;
       society.culture = remote.culture;
+      this.trackNewTechniques(remote.innovations.techniques, society.islandId);
     }
 
     this.regionalNetworkTimer += simDt;
@@ -3008,6 +3020,84 @@ export class Game {
     } else if (!alien && this.lastAlienPhase !== null) {
       this.lastAlienPhase = null;
     }
+    this.trackNewTechniques(snapshot.innovations.techniques, "player");
+  }
+
+  private trackNewTechniques(techniques: readonly string[], regionId: string): void {
+    const islandId = regionId === "player" ? "0,0" : regionId;
+    for (const tech of techniques) {
+      const key = `${regionId}:${tech}`;
+      if (this.lastKnownTechniques.has(key)) continue;
+      this.lastKnownTechniques.add(key);
+      this.worldState.addRegionInnovation(islandId, tech);
+      this.assignKnowledgeCarrier(tech, regionId);
+    }
+  }
+
+  private assignKnowledgeCarrier(technique: string, regionId: string): void {
+    const roleMap: Record<string, string> = {
+      "seed-selection": "farmer", "crop-rotation": "farmer", "irrigation": "farmer", "terracing": "farmer",
+      "coastal-navigation": "fisher", "sailcraft": "fisher", "harbor-engineering": "fisher",
+      "metallurgy": "smith", "masonry": "smith",
+      "ledger": "merchant", "codified-law": "merchant", "public-archive": "keeper",
+      "waterworks": "farmer", "soil-restoration": "farmer", "forestry-management": "woodcutter",
+    };
+    const targetRole = roleMap[technique];
+    const tribe = regionId !== "player";
+    const carrier = (targetRole
+      ? this.people.find(p => p.role === targetRole && p.tribe === tribe && (!tribe || p.islandId === regionId))
+      : undefined)
+      ?? this.people.find(p => p.tribe === tribe && (!tribe || p.islandId === regionId));
+    if (carrier && !carrier.knowledgeCarrier.includes(technique)) {
+      carrier.knowledgeCarrier.push(technique);
+    }
+  }
+
+  private checkKnowledgeLoss(departing: Person): void {
+    if (departing.knowledgeCarrier.length === 0) return;
+    const hasArchive = this.simulation.snapshot.institutions.forms.includes("archive");
+    if (hasArchive) return;
+    const regionId = departing.tribe ? departing.islandId : "player";
+    for (const tech of departing.knowledgeCarrier) {
+      const otherCarriers = this.people.filter(p =>
+        p.id !== departing.id &&
+        (p.tribe === departing.tribe) &&
+        (!departing.tribe || p.islandId === regionId) &&
+        p.knowledgeCarrier.includes(tech),
+      );
+      if (otherCarriers.length === 0) {
+        this.techniqueDisruption.set(tech, 5);
+        this.setHint(`The last keeper of ${tech} has passed. Production will suffer until the knowledge is relearned.`);
+      }
+    }
+  }
+
+  private tickTechniqueDisruption(): void {
+    if (this.techniqueDisruption.size === 0) return;
+    for (const [tech, years] of this.techniqueDisruption) {
+      if (years <= 1) {
+        this.techniqueDisruption.delete(tech);
+      } else {
+        this.techniqueDisruption.set(tech, years - 1);
+      }
+    }
+  }
+
+  private techniqueDisruptionPenalty(building: import("./buildings.ts").BuildingId): number {
+    const techForBuilding: Partial<Record<import("./buildings.ts").BuildingId, string[]>> = {
+      farm: ["seed-selection", "crop-rotation", "irrigation", "terracing"],
+      orchard: ["seed-selection", "crop-rotation"],
+      fishery: ["coastal-navigation", "sailcraft"],
+      mine: ["metallurgy", "masonry"],
+      forge: ["metallurgy", "masonry"],
+      market: ["ledger", "codified-law"],
+      lumber: ["forestry-management"],
+    };
+    const relevant = techForBuilding[building] ?? [];
+    for (const tech of relevant) {
+      if (this.techniqueDisruption.has(tech)) return 0.5;
+    }
+    return 1;
   }
 
   private captureChronicleCheckpoint(year = yearFromDays(this.simDays)): void {
@@ -3205,6 +3295,38 @@ export class Game {
           if (society) this.setHint(`${society.name} acquires ${tech} through exchange.`);
         }
       }
+    }
+  }
+
+  private rediscoverRegionInnovations(islandId: string, society: Society): void {
+    const persisted = this.worldState.getRegionInnovations(islandId);
+    if (persisted.length === 0) return;
+    const buildingSet = new Set<string>();
+    for (const tile of this.tiles.values()) {
+      if (tile.islandId === islandId && tile.owner === "tribe" && tile.building) buildingSet.add(tile.building);
+    }
+    const buildingForTech: Record<string, string[]> = {
+      "seed-selection": ["farm", "orchard"], "crop-rotation": ["farm", "orchard"], "irrigation": ["farm"], "terracing": ["farm"],
+      "coastal-navigation": ["fishery"], "sailcraft": ["fishery"], "harbor-engineering": ["fishery", "market"],
+      "metallurgy": ["forge", "mine"], "masonry": ["forge", "mine"],
+      "ledger": ["market"], "codified-law": ["market"], "public-archive": ["shrine"],
+      "waterworks": ["farm", "fishery"], "soil-restoration": ["farm", "orchard"], "forestry-management": ["lumber"],
+    };
+    let rediscovered = 0;
+    for (const tech of persisted) {
+      const required = buildingForTech[tech] ?? [];
+      if (required.length > 0 && !required.some(b => buildingSet.has(b))) continue;
+      const snap = this.lastRegionalSnapshots.get(islandId);
+      if (snap && !snap.innovations.techniques.includes(tech as import("./simulation/innovation.ts").Technique)) {
+        (snap.innovations as { techniques: string[] }).techniques.push(tech);
+        (snap.innovations as { provenance: Record<string, string> }).provenance[tech] = "ruin rediscovery";
+        rediscovered += 1;
+      } else if (!snap) {
+        rediscovered += 1;
+      }
+    }
+    if (rediscovered > 0) {
+      this.setHint(`${society.name} rediscovers ${rediscovered} technique${rediscovered > 1 ? "s" : ""} from the ruins of a predecessor.`);
     }
   }
 
@@ -3417,6 +3539,7 @@ export class Game {
     }
     for (let i = toRemove.length - 1; i >= 0; i--) {
       const person = this.people[toRemove[i]];
+      this.checkKnowledgeLoss(person);
       this.peopleGroup.remove(person.mesh);
       this.people.splice(toRemove[i], 1);
     }
@@ -3685,6 +3808,7 @@ export class Game {
       ) ??
       this.people.find((entry) => entry.tribe === tribe && (islandId ? entry.islandId === islandId : true));
     if (!person) return false;
+    this.checkKnowledgeLoss(person);
     this.peopleGroup.remove(person.mesh);
     this.people.splice(this.people.indexOf(person), 1);
     this.assignJobs();

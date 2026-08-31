@@ -52,6 +52,7 @@ export class SimulationEngine {
       innovations: { techniques: [], provenance: {} },
       originCrisis: null,
       bioculturalDiversity: 0.5,
+      practiceVulnerability: {},
       diseaseOutbreak: false,
       pandemic: null,
       alienContact: null,
@@ -130,6 +131,7 @@ export class SimulationEngine {
     this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
     this.state.climate = climate;
     this.updateCulture(inputs, span);
+    this.updatePracticeVulnerability(span);
     this.releaseFamineBuffer(inputs.population);
     this.updateInstitutions(inputs, span);
     this.updateInnovations(inputs);
@@ -196,6 +198,7 @@ export class SimulationEngine {
     const elderBonus = this.state.demographics.elders * 0.6 * (this.state.institutions.forms.includes("elders") ? 1.4 : 1);
     this.state.knowledge += ((inputs.population * 0.22 + civicWorks * 1.6) * institutionRules.knowledgeMultiplier * innovationRules.knowledge * crisisRules.knowledge + elderBonus) * yearPart * (0.65 + this.state.stability * 0.5);
     this.updateCulture(inputs, yearPart);
+    this.updatePracticeVulnerability(yearPart);
     this.releaseFamineBuffer(inputs.population);
     this.updateInstitutions(inputs, yearPart);
     this.updateInnovations(inputs);
@@ -265,6 +268,7 @@ export class SimulationEngine {
     if (inputs.aggregateTraits) {
       this.state.culture.traits = { ...inputs.aggregateTraits };
     }
+    const blockedSlots = Object.values(this.state.practiceVulnerability).filter(v => v < 0).length;
     this.state.culture = evolvePracticesAndLanguage(this.state.culture, {
       elapsedDays: this.state.elapsedDays,
       ecology: this.state.ecology,
@@ -282,7 +286,7 @@ export class SimulationEngine {
       health: this.state.health,
       stability: this.state.stability,
       inputs,
-    }, this.random, elapsedYears);
+    }, this.random, elapsedYears, blockedSlots);
   }
 
   private updateInstitutions(inputs: SimulationInputs, elapsedYears: number): void {
@@ -448,6 +452,41 @@ export class SimulationEngine {
     const practiceDiv = clamp01(culture.practices.length / 8);
     const ecologicalDiv = (ecology.soil + ecology.forest + ecology.fish + ecology.water) / 4;
     this.state.bioculturalDiversity = Math.cbrt(linguisticDiv * practiceDiv * ecologicalDiv);
+  }
+
+  private updatePracticeVulnerability(yearPart: number): void {
+    const ecology = this.state.ecology;
+    const dependencies: Record<string, { field: keyof Ecology; threshold: number }> = {
+      "wayfinding compact": { field: "fish", threshold: 0.2 },
+      "soil-rest covenant": { field: "soil", threshold: 0.2 },
+      "living commons": { field: "forest", threshold: 0.2 },
+      "storm ledger": { field: "water", threshold: 0.2 },
+      "forestry-management": { field: "forest", threshold: 0.2 },
+    };
+    const vuln = this.state.practiceVulnerability;
+    for (const [practice, dep] of Object.entries(dependencies)) {
+      if (vuln[practice] !== undefined && vuln[practice] < 0) {
+        vuln[practice] += yearPart;
+        if (vuln[practice] >= 0) delete vuln[practice];
+        continue;
+      }
+      if (!this.state.culture.practices.includes(practice)) {
+        if (vuln[practice] !== undefined && vuln[practice] >= 0) delete vuln[practice];
+        continue;
+      }
+      if (ecology[dep.field] < dep.threshold) {
+        vuln[practice] = (vuln[practice] ?? 0) + yearPart;
+        if (vuln[practice] >= 5) {
+          this.state.culture = {
+            ...this.state.culture,
+            practices: this.state.culture.practices.filter(p => p !== practice),
+          };
+          vuln[practice] = -2;
+        }
+      } else {
+        if (vuln[practice] !== undefined && vuln[practice] >= 0) vuln[practice] = 0;
+      }
+    }
   }
 
   private releaseFamineBuffer(population: number): void {

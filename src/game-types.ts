@@ -61,6 +61,7 @@ export type Person = {
   seed: number;
   age: number;
   strategy: BehavioralStrategy;
+  knowledgeCarrier: string[];
 };
 
 export type Society = {

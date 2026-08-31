@@ -64,6 +64,7 @@ export class WorldState {
   private readonly chunks = new Map<string, WorldChunk>();
   private readonly biomeOverrides = new Map<string, Biome>();
   private readonly landmarkOverrides = new Map<string, Landmark>();
+  private readonly regionInnovations = new Map<string, string[]>();
   private tick = 0;
   private readonly seed: number;
   private readonly archetype: WorldArchetype;
@@ -120,6 +121,16 @@ export class WorldState {
   hasBuilding(q: number, r: number): boolean {
     const coords = chunkCoordinates(q, r);
     return Boolean(this.chunks.get(chunkKey(coords.q, coords.r))?.tiles.get(hexKey(q, r))?.building);
+  }
+
+  addRegionInnovation(islandId: string, technique: string): void {
+    const list = this.regionInnovations.get(islandId) ?? [];
+    if (!list.includes(technique)) list.push(technique);
+    this.regionInnovations.set(islandId, list);
+  }
+
+  getRegionInnovations(islandId: string): string[] {
+    return this.regionInnovations.get(islandId) ?? [];
   }
 
   activeChunks(): readonly WorldChunk[] {

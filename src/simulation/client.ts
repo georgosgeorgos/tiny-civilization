@@ -108,6 +108,11 @@ export class SimulationClient {
     return this.regionalCurrent;
   }
 
+  getRegionSnapshot(id: string): SimulationSnapshot | undefined {
+    const snap = this.regionalCurrent.get(id);
+    return snap ? { ...snap } as SimulationSnapshot : undefined;
+  }
+
   /** Forget a collapsed settlement so a later renewal starts a fresh regional chronology. */
   retireRegion(id: string): void {
     this.regionalFallback.delete(id);
