@@ -26,12 +26,21 @@ export type NetworkRegion = {
   diseaseRisk?: number;
   /** Institutional and innovation protection against imported disease, 0-1. */
   healthProtection?: number;
+  /** Technique names held by this region, for diffusion through trade. */
+  techniques?: string[];
 };
 
-export type NetworkEffect = { food: number; wood: number; gold: number; knowledge: number; stability: number; migrants: number; culture: CultureTraits; diseaseImport: number };
+export type NetworkEffect = { food: number; wood: number; gold: number; knowledge: number; stability: number; migrants: number; culture: CultureTraits; diseaseImport: number; techniquesGained: string[] };
 export type NetworkConnection = "none" | "parley" | "trade";
 
-const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, stability: 0, migrants: 0, culture: { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 }, diseaseImport: 0 });
+const hashPair = (a: string, b: string): number => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < a.length; i++) h = ((h ^ a.charCodeAt(i)) * 0x01000193) >>> 0;
+  for (let i = 0; i < b.length; i++) h = ((h ^ b.charCodeAt(i)) * 0x01000193) >>> 0;
+  return (h & 0x7fffffff) / 0x7fffffff;
+};
+
+const blank = (): NetworkEffect => ({ food: 0, wood: 0, gold: 0, knowledge: 0, stability: 0, migrants: 0, culture: { cooperation: 0, curiosity: 0, mobility: 0, stewardship: 0, resilience: 0 }, diseaseImport: 0, techniquesGained: [] });
 
 /**
  * Resource exchange, cultural diffusion and migration emerge from proximity
@@ -123,6 +132,20 @@ export function exchangeRegions(
       const diseaseFactor = mode === "trade" ? 0.08 : 0.024;
       fromEffect.diseaseImport += diseaseFactor * toDisease * (1 - Math.min(1, from.healthProtection ?? 0)) * strength;
       toEffect.diseaseImport += diseaseFactor * fromDisease * (1 - Math.min(1, to.healthProtection ?? 0)) * strength;
+      if (mode === "trade" && from.techniques && to.techniques) {
+        const fromCuriosity = from.culture?.curiosity ?? 0.5;
+        const toCuriosity = to.culture?.curiosity ?? 0.5;
+        for (const tech of from.techniques) {
+          if (!to.techniques.includes(tech) && strength * 0.03 * toCuriosity * years > Math.abs(hashPair(from.id, tech))) {
+            toEffect.techniquesGained.push(tech);
+          }
+        }
+        for (const tech of to.techniques) {
+          if (!from.techniques.includes(tech) && strength * 0.03 * fromCuriosity * years > Math.abs(hashPair(to.id, tech))) {
+            fromEffect.techniquesGained.push(tech);
+          }
+        }
+      }
     }
   }
   // A trade graph should have consequences beyond isolated pairs. A single,

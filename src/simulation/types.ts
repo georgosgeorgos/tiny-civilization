@@ -38,6 +38,16 @@ export type CulturalState = {
  * an origin's later institutions can be explained by a concrete past crisis. */
 export type OriginCrisis = { origin: Origin; outcome: string; year: number };
 
+export type AlienContactPhase = "signal" | "interpretation" | "response" | "resolved";
+export type AlienContactOutcome = "observation" | "knowledge-exchange" | "withdrawal";
+export type AlienContactState = {
+  phase: AlienContactPhase;
+  detectedYear: number;
+  interpretationProgress: number;
+  outcome: AlienContactOutcome | null;
+  culturalImpact: number;
+};
+
 export type PandemicState = {
   id: number;
   virulence: number;
@@ -78,6 +88,7 @@ export type SimulationSnapshot = {
   originCrisis: OriginCrisis | null;
   diseaseOutbreak: boolean;
   pandemic: PandemicState | null;
+  alienContact: AlienContactState | null;
 };
 
 export type SimulationInputs = {

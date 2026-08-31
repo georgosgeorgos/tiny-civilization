@@ -52,6 +52,7 @@ export class SimulationEngine {
       originCrisis: null,
       diseaseOutbreak: false,
       pandemic: null,
+      alienContact: null,
     };
   }
 
@@ -195,6 +196,7 @@ export class SimulationEngine {
     this.state.elapsedDays += stepDays;
     this.resolveOriginCrisis(inputs);
     this.advancePandemic(inputs, yearPart, institutionRules.healthProtection + innovationRules.healthProtection);
+    this.advanceAlienContact(inputs, yearPart);
   }
 
   private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate): void {
@@ -349,6 +351,77 @@ export class SimulationEngine {
       startYear: currentYear,
       affectedRegions: ["local"],
       resolved: false,
+    };
+  }
+
+  private advanceAlienContact(inputs: SimulationInputs, yearPart: number): void {
+    const currentYear = Math.floor(this.state.elapsedDays / DAYS_PER_YEAR);
+    const contact = this.state.alienContact;
+    if (contact && !contact.outcome) {
+      if (contact.phase === "signal") {
+        contact.phase = "interpretation";
+      }
+      if (contact.phase === "interpretation") {
+        if (inputs.population <= 0) {
+          contact.phase = "resolved";
+          contact.outcome = "withdrawal";
+          return;
+        }
+        const hasArchive = this.state.innovations.techniques.includes("public-archive");
+        const curiosity = this.state.culture.traits.curiosity;
+        const rate = 0.08 + (hasArchive ? 0.06 : 0) + curiosity * 0.04;
+        contact.interpretationProgress = Math.min(1, contact.interpretationProgress + rate * yearPart);
+        if (contact.interpretationProgress >= 1) {
+          const resilience = this.state.culture.traits.resilience;
+          const boundary = this.state.culture.language.boundary;
+          if (curiosity > 0.6 && hasArchive) {
+            contact.outcome = "knowledge-exchange";
+          } else if (resilience > 0.6 && boundary > 0.5) {
+            contact.outcome = "observation";
+          } else {
+            contact.outcome = this.random.next() < 0.25 ? "withdrawal" : "observation";
+          }
+          contact.phase = "response";
+        }
+      }
+      return;
+    }
+    if (contact?.phase === "response" && contact.outcome) {
+      if (contact.outcome === "observation") {
+        this.state.knowledge += 15 * yearPart;
+        this.state.stability = clamp01(this.state.stability + 0.003 * (yearPart * DAYS_PER_YEAR));
+      } else if (contact.outcome === "knowledge-exchange") {
+        this.state.knowledge += 40 * yearPart;
+        this.state.stability = clamp01(this.state.stability + 0.005 * (yearPart * DAYS_PER_YEAR));
+        contact.culturalImpact = Math.min(1, contact.culturalImpact + 0.02 * yearPart);
+      } else if (contact.outcome === "withdrawal") {
+        this.state.knowledge += 5;
+        this.state.stability = clamp01(this.state.stability - 0.08);
+        contact.phase = "resolved";
+      }
+      if (inputs.population <= 0) {
+        contact.phase = "resolved";
+        contact.outcome = "withdrawal";
+      }
+      return;
+    }
+    const prevYear = Math.floor((this.state.elapsedDays - yearPart * DAYS_PER_YEAR) / DAYS_PER_YEAR);
+    if (currentYear === prevYear) return;
+    if (this.state.alienContact !== null) return;
+    const era = this.state.era;
+    if (era !== "Adaptive" && era !== "Orbital") return;
+    const eraMultiplier = 3;
+    const archiveMultiplier = this.state.innovations.techniques.includes("public-archive") ? 1.5 : 1;
+    const spaceMultiplier = inputs.origin === "spacecraft" ? 2.5 : 1;
+    const knowledgeFactor = Math.min(2.0, this.state.knowledge / 100);
+    const probability = Math.min(0.08, 0.002 * eraMultiplier * archiveMultiplier * spaceMultiplier * knowledgeFactor);
+    if (this.random.next() >= probability) return;
+    this.state.alienContact = {
+      phase: "signal",
+      detectedYear: currentYear,
+      interpretationProgress: 0,
+      outcome: null,
+      culturalImpact: 0,
     };
   }
 

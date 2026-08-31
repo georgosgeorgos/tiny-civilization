@@ -73,6 +73,7 @@ import type { HistoryLayer, HistoryMark, TerritorialClaim } from "./world-state"
 import { createSpacecraftSystem, type SpacecraftSystem } from "./spacecraft";
 import { createSubatomicSystem, type SubatomicSystem } from "./subatomic";
 import { originProfile, type OriginProfile } from "./origins";
+import { advanceWar, computeStrength, createWar, type WarState } from "./simulation/warfare.ts";
 import { SeededRandom } from "./simulation/random.ts";
 
 type CatastropheState = {
@@ -325,6 +326,8 @@ export class Game {
   private lifecycleTimer = 0;
   private readonly fragmentationCooldown = new Map<string, number>();
   private readonly conflictCooldown = new Map<string, number>();
+  private readonly activeWars = new Map<string, WarState>();
+  private readonly warCooldown = new Map<string, number>();
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
@@ -353,6 +356,8 @@ export class Game {
   private lastSimulationInputs: SimulationInputs | null = null;
   private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
   private lastOriginCrisis: string | null = null;
+  private lastAlienPhase: string | null = null;
+  private alienSignalBeacon: THREE.Mesh | null = null;
   private readonly gameRandom!: SeededRandom;
   private catastrophe: CatastropheState | null = null;
   private lastEruptionDay = -Infinity;
@@ -1867,11 +1872,11 @@ export class Game {
   private eraAllows(era: EvolutionEra, id: BuildingId, culture?: CulturalState): boolean {
     if (EVOLUTION_RANK[era] >= EVOLUTION_RANK[BUILDING_ERA[id]]) return true;
     const practices = new Set(culture?.practices ?? []);
-    // Cultural discoveries can open a path that a linear "age" would miss.
-    if (id === "orchard" && practices.has("soil-rest covenant")) return true;
-    if ((id === "market" || id === "shrine") && practices.has("common granary")) return true;
-    if (id === "fishery" && practices.has("wayfinding compact")) return true;
-    if (id === "forge" && practices.has("open archive")) return true;
+    const techniques = new Set(this.simulation.snapshot.innovations.techniques);
+    if (id === "orchard" && (practices.has("soil-rest covenant") || techniques.has("irrigation") || techniques.has("terracing"))) return true;
+    if ((id === "market" || id === "shrine") && (practices.has("common granary") || techniques.has("codified-law"))) return true;
+    if (id === "fishery" && (practices.has("wayfinding compact") || techniques.has("harbor-engineering"))) return true;
+    if (id === "forge" && (practices.has("open archive") || techniques.has("masonry"))) return true;
     return false;
   }
 
@@ -2412,6 +2417,8 @@ export class Game {
       this.mood = THREE.MathUtils.clamp(this.mood + result.stabilityDelta * 100, 0, 100);
       this.setHint(`${society.name}: ${result.outcome} follows regional grievance and bargaining.`);
     }
+    this.evaluateWarEscalation(year);
+    this.advanceWars(year);
   }
 
   private contestedResourcePressure(society: Society): number {
@@ -2455,6 +2462,130 @@ export class Game {
       this.paintTerritory(tile);
       this.persistTile(tile);
     }
+  }
+
+  private evaluateWarEscalation(year: number): void {
+    for (const society of this.societies.values()) {
+      const pairKey = this.regionalRelationKey("player", society.islandId);
+      if (this.activeWars.has(pairKey)) continue;
+      const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+      if (year < cooldownEnd + 30) continue;
+      if (society.relation >= -30) continue;
+      if (society.diplomacy.treaty === "trade-pact" || society.diplomacy.treaty === "parley") continue;
+      if (society.culture.traits.cooperation >= 0.7) continue;
+      this.activeWars.set(pairKey, createWar(society.islandId, "player", year));
+      society.diplomacy.treaty = "hostile";
+      this.setHint(`${society.name} enters a period of escalation; grievances are mounting toward conflict.`);
+    }
+    const societies = [...this.societies.values()];
+    for (let a = 0; a < societies.length; a += 1) {
+      for (let b = a + 1; b < societies.length; b += 1) {
+        const left = societies[a];
+        const right = societies[b];
+        if (!left || !right) continue;
+        const pairKey = this.regionalRelationKey(left.islandId, right.islandId);
+        if (this.activeWars.has(pairKey)) continue;
+        const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+        if (year < cooldownEnd + 30) continue;
+        const relation = this.regionalRelations.get(pairKey);
+        if (!relation || relation.stance !== "hostile") continue;
+        if (left.culture.traits.cooperation >= 0.7 && right.culture.traits.cooperation >= 0.7) continue;
+        if (left.relation > -20 && right.relation > -20) continue;
+        this.activeWars.set(pairKey, createWar(left.islandId, right.islandId, year));
+        this.setHint(`${left.name} and ${right.name} enter a period of escalation; war may follow.`);
+      }
+    }
+  }
+
+  private advanceWars(year: number): void {
+    for (const [key, war] of this.activeWars) {
+      const aggSociety = war.aggressorId === "player" ? null : this.societies.get(war.aggressorId);
+      const defSociety = war.defenderId === "player" ? null : this.societies.get(war.defenderId);
+      if (!aggSociety && war.aggressorId !== "player") { this.activeWars.delete(key); continue; }
+      if (!defSociety && war.defenderId !== "player") { this.activeWars.delete(key); continue; }
+      const aggInputs = this.lastSimulationInputs;
+      const defInputs = this.lastSimulationInputs;
+      const aggSnap = aggSociety ? this.lastRegionalSnapshots.get(aggSociety.islandId) : this.simulation.snapshot;
+      const defSnap = defSociety ? this.lastRegionalSnapshots.get(defSociety.islandId) : this.simulation.snapshot;
+      if (!aggInputs || !defInputs || !aggSnap || !defSnap) continue;
+      const aggStr = computeStrength(aggInputs, aggSnap);
+      const defStr = computeStrength(defInputs, defSnap);
+      const scarcity = aggSociety ? Math.max(0, 1 - aggSociety.food / Math.max(3, this.people.filter((p) => p.tribe && p.islandId === aggSociety.islandId).length * 2.5)) : Math.max(0, 1 - this.food / Math.max(3, this.citizens().length * 2.5));
+      const grievance = aggSociety ? Math.max(0, -aggSociety.relation / 45) : 0.5;
+      const warRisk = grievance * 0.48 + scarcity * 0.34;
+      const negotiationRoll = hash2(key.length + year, year * 7);
+      const next = advanceWar(war, year, aggStr, defStr, negotiationRoll, warRisk);
+      if (next.phase === "active" && war.phase !== "active") {
+        if (aggSociety) aggSociety.diplomacy.treaty = "hostile";
+        if (defSociety) defSociety.diplomacy.treaty = "hostile";
+        this.setHint(`${aggSociety?.name ?? "Your settlement"} and ${defSociety?.name ?? "your settlement"} are now at war.`);
+      }
+      if (next.resolved) {
+        this.resolveWarOutcome(next, aggSociety ?? null, defSociety ?? null);
+        this.warCooldown.set(key, year);
+        this.activeWars.delete(key);
+      } else {
+        this.activeWars.set(key, next);
+      }
+    }
+  }
+
+  private resolveWarOutcome(war: WarState, aggSociety: Society | null, defSociety: Society | null): void {
+    const addPractice = (society: Society | null, practice: string) => {
+      if (!society) {
+        if (!this.simulation.snapshot.culture.practices.includes(practice)) (this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot).culture.practices.push(practice);
+      } else if (!society.culture.practices.includes(practice)) {
+        society.culture.practices.push(practice);
+      }
+    };
+    if (war.outcome === "victory") {
+      if (defSociety) {
+        this.splitContestedTerritory(defSociety);
+        const tribute = Math.min(defSociety.gold, 8);
+        defSociety.gold -= tribute;
+        if (aggSociety) aggSociety.gold += tribute; else this.gold += tribute;
+        addPractice(defSociety, "war-resilience");
+      }
+      this.setHint(`${aggSociety?.name ?? "Your settlement"} prevails; territory shifts and tribute is paid.`);
+    } else if (war.outcome === "defeat") {
+      if (aggSociety) {
+        this.splitContestedTerritory(aggSociety);
+        const tribute = Math.min(aggSociety.gold, 8);
+        aggSociety.gold -= tribute;
+        if (defSociety) defSociety.gold += tribute; else this.gold += tribute;
+        addPractice(aggSociety, "war-resilience");
+      }
+      this.setHint(`${defSociety?.name ?? "Your settlement"} prevails; the aggressor retreats and pays tribute.`);
+    } else if (war.outcome === "negotiated-peace") {
+      if (aggSociety) {
+        this.splitContestedTerritory(aggSociety);
+        aggSociety.diplomacy.trust = 0.35;
+        aggSociety.diplomacy.treaty = "parley";
+      }
+      if (defSociety) {
+        defSociety.diplomacy.trust = 0.35;
+        defSociety.diplomacy.treaty = "parley";
+      }
+      addPractice(aggSociety, "peace-charter");
+      addPractice(defSociety, "peace-charter");
+      this.setHint(`${aggSociety?.name ?? "Your settlement"} and ${defSociety?.name ?? "your settlement"} negotiate a peace charter.`);
+    } else {
+      if (aggSociety) aggSociety.mood = Math.max(0, aggSociety.mood - 5);
+      if (defSociety) defSociety.mood = Math.max(0, defSociety.mood - 5);
+      else this.mood = Math.max(0, this.mood - 5);
+      addPractice(aggSociety, "war-weariness");
+      addPractice(defSociety, "war-weariness");
+      this.setHint(`Exhaustion ends the conflict between ${aggSociety?.name ?? "your settlement"} and ${defSociety?.name ?? "your settlement"}.`);
+    }
+  }
+
+
+  private isMobilized(regionId: string): boolean {
+    for (const war of this.activeWars.values()) {
+      if (war.phase !== "active") continue;
+      if (war.aggressorId === regionId || war.defenderId === regionId) return true;
+    }
+    return false;
   }
 
   private societyTurn = 0;
@@ -2770,6 +2901,11 @@ export class Game {
     const laborEff = 1 / (1 + depRatio * 0.25);
     annualProduction.food *= laborEff;
     annualProduction.wood *= laborEff;
+    if (this.isMobilized("player")) {
+      annualProduction.food *= 0.7;
+      annualProduction.wood *= 0.7;
+      annualProduction.gold *= 0.7;
+    }
     const snap = this.civSnapshot();
     const disruption = this.event === "drought" || this.event === "flood" || this.event === "wildfire" || this.event === "ash"
       ? this.event
@@ -2781,7 +2917,7 @@ export class Game {
       housing,
       annualProduction,
       buildings: snap.counts,
-      moodPressure: (happiness - 50) / 50 - (household?.migrationPressure ?? 0) * 0.12 + this.originProfile.moodPressure,
+      moodPressure: (happiness - 50) / 50 - (household?.migrationPressure ?? 0) * 0.12 + this.originProfile.moodPressure - (this.isMobilized("player") ? 0.15 : 0),
       infrastructure: this.playerInfrastructure(),
       disruption: this.spacecraftMode && this.hullIntegrity < 38 ? "storm" : disruption,
       fidelity: "local",
@@ -2823,10 +2959,12 @@ export class Game {
       const tribeDemographics = this.computeDemographics(tribe);
       const tribeDepRatio = (tribeDemographics.children + tribeDemographics.elders) / Math.max(1, tribeDemographics.adults);
       const tribeLaborEff = 1 / (1 + tribeDepRatio * 0.25);
+      const mobilized = this.isMobilized(society.islandId);
+      const warFactor = mobilized ? 0.7 : 1;
       const annual = {
-        food: yieldNow.food / Math.max(deltaYears, 0.000001) * tribeLaborEff,
-        wood: yieldNow.wood / Math.max(deltaYears, 0.000001) * tribeLaborEff + 0.35,
-        gold: yieldNow.gold / Math.max(deltaYears, 0.000001) + 0.4 + (society.relation <= -14 ? 0.7 : 0),
+        food: yieldNow.food / Math.max(deltaYears, 0.000001) * tribeLaborEff * warFactor,
+        wood: (yieldNow.wood / Math.max(deltaYears, 0.000001) * tribeLaborEff + 0.35) * warFactor,
+        gold: (yieldNow.gold / Math.max(deltaYears, 0.000001) + 0.4 + (society.relation <= -14 ? 0.7 : 0)) * warFactor,
       };
       regionalInputs.push({
         id: society.islandId,
@@ -2838,7 +2976,7 @@ export class Game {
           housing: tribeHousing,
           annualProduction: annual,
           buildings: counts,
-          moodPressure: (tribeHappiness - 50) / 50 - (householdSignals.get(society.islandId)?.migrationPressure ?? 0) * 0.1,
+          moodPressure: (tribeHappiness - 50) / 50 - (householdSignals.get(society.islandId)?.migrationPressure ?? 0) * 0.1 - (mobilized ? 0.15 : 0),
           infrastructure: this.tribeInfrastructure(society.islandId),
           disruption,
           fidelity: "remote",
@@ -2942,6 +3080,22 @@ export class Game {
       this.lastOriginCrisis = snapshot.originCrisis.outcome;
       this.setHint(`Year ${snapshot.originCrisis.year}: ${this.originProfile.title} faces ${snapshot.originCrisis.outcome}. Its institutions and knowledge path will now remember this fork.`);
     }
+    const alien = snapshot.alienContact;
+    if (alien && alien.phase !== this.lastAlienPhase) {
+      this.lastAlienPhase = alien.phase;
+      if (alien.phase === "interpretation") {
+        this.setHint("The archive reports a structured signal from beyond Tidelight. Its origin is not terrestrial.");
+      } else if (alien.phase === "response" && alien.outcome) {
+        const outcomeText = alien.outcome === "knowledge-exchange" ? "A knowledge exchange begins — understanding accelerates, but local identity feels the weight of something vast."
+          : alien.outcome === "observation" ? "Mutual observation established. Knowledge accelerates while local customs remain undisturbed."
+          : "The signal withdraws abruptly. The scholars are left with fragments and an unanswered question.";
+        this.setHint(outcomeText);
+      } else if (alien.phase === "resolved") {
+        this.setHint("Contact with the external signal has ended. Its effects linger in the archive.");
+      }
+    } else if (!alien && this.lastAlienPhase !== null) {
+      this.lastAlienPhase = null;
+    }
   }
 
   private captureChronicleCheckpoint(year = yearFromDays(this.simDays)): void {
@@ -3041,6 +3195,7 @@ export class Game {
       language: playerSim.culture.language,
       diseaseRisk: playerSim.ecology.disease,
       healthProtection: playerHealthProtection,
+      techniques: [...playerSim.innovations.techniques],
     }];
     for (const society of this.societies.values()) {
       const [q, r] = society.islandId.split(",").map(Number);
@@ -3064,6 +3219,7 @@ export class Game {
         language: society.culture.language,
         diseaseRisk: regionDisease,
         healthProtection: regionHP,
+        techniques: regionSnap ? [...regionSnap.innovations.techniques] : [],
       });
     }
     const effects = exchangeRegions(regions, years, (from, to) => this.networkConnection(from, to));
@@ -3076,6 +3232,7 @@ export class Game {
       this.mood = Math.max(0, Math.min(100, this.mood + playerEffect.stability * 100));
       this.culturalInfluence = this.blendCultureInfluence(this.culturalInfluence, playerEffect.culture);
       this.playerDiseaseImport = playerEffect.diseaseImport;
+      this.applyGainedTechniques(playerEffect.techniquesGained, "player");
     }
     for (const society of this.societies.values()) {
       const effect = effects.get(society.islandId);
@@ -3087,6 +3244,7 @@ export class Game {
       society.mood = Math.max(0, Math.min(100, society.mood + effect.stability * 100));
       society.culturalInfluence = this.blendCultureInfluence(society.culturalInfluence, effect.culture);
       this.societyDiseaseImport.set(society.islandId, effect.diseaseImport);
+      this.applyGainedTechniques(effect.techniquesGained, society.islandId);
     }
     this.reconcileCommunicationLinks(regions);
     const origins = regions.filter((region) => (effects.get(region.id)?.migrants ?? 0) < 0);
@@ -3111,6 +3269,31 @@ export class Game {
       next[trait] = THREE.MathUtils.clamp(prior * 0.76 + signal[trait], -0.35, 0.35);
     }
     return next;
+  }
+
+  private applyGainedTechniques(gained: string[], regionId: string): void {
+    if (gained.length === 0) return;
+    if (regionId === "player") {
+      const innovations = this.simulation.snapshot.innovations;
+      for (const tech of gained) {
+        if (!innovations.techniques.includes(tech as import("./simulation/innovation.ts").Technique)) {
+          (innovations as { techniques: string[] }).techniques.push(tech);
+          (innovations as { provenance: Record<string, string> }).provenance[tech] = "trade diffusion";
+          this.setHint(`A new technique — ${tech} — arrives through trade contact.`);
+        }
+      }
+    } else {
+      const snap = this.lastRegionalSnapshots.get(regionId);
+      if (!snap) return;
+      for (const tech of gained) {
+        if (!snap.innovations.techniques.includes(tech as import("./simulation/innovation.ts").Technique)) {
+          (snap.innovations as { techniques: string[] }).techniques.push(tech);
+          (snap.innovations as { provenance: Record<string, string> }).provenance[tech] = "trade diffusion";
+          const society = this.societies.get(regionId);
+          if (society) this.setHint(`${society.name} acquires ${tech} through exchange.`);
+        }
+      }
+    }
   }
 
   /** Visualize established interregional exchange as a persistent signal and moving packet. */
@@ -3214,6 +3397,37 @@ export class Game {
     const center = [...this.tiles.values()].find((tile) => tile.islandId === id && tile.owner === "tribe" && tile.ready && tile.building === "market")
       ?? [...this.tiles.values()].find((tile) => tile.islandId === id && tile.owner === "tribe" && tile.ready);
     return center ? this.tileTop(center).add(new THREE.Vector3(0, 0.8, 0)) : null;
+  }
+
+  private updateAlienSignalBeacon(time: number): void {
+    const contact = this.simulation.snapshot.alienContact;
+    if (!contact || contact.phase === "resolved") {
+      if (this.alienSignalBeacon) this.alienSignalBeacon.visible = false;
+      return;
+    }
+    if (!this.alienSignalBeacon) {
+      const beaconColor = 0x44ccff;
+      this.alienSignalBeacon = new THREE.Mesh(
+        new THREE.SphereGeometry(4, 12, 10),
+        new THREE.MeshStandardMaterial({ color: beaconColor, emissive: beaconColor, emissiveIntensity: 2.5, transparent: true, opacity: 0.7 }),
+      );
+      const target = this.cosmos.group.children.find((child) => child !== this.cosmos.planet && child.userData.planetName);
+      if (target) {
+        target.add(this.alienSignalBeacon);
+        this.alienSignalBeacon.position.set(0, 40, 0);
+      } else {
+        this.cosmos.group.add(this.alienSignalBeacon);
+        this.alienSignalBeacon.position.set(600, 80, -400);
+      }
+    }
+    this.alienSignalBeacon.visible = true;
+    const mat = this.alienSignalBeacon.material as THREE.MeshStandardMaterial;
+    const pulse = 0.5 + Math.sin(time * 2.5) * 0.5;
+    mat.emissiveIntensity = 1.5 + pulse * 2;
+    mat.opacity = 0.4 + pulse * 0.4;
+    const phaseColor = contact.phase === "interpretation" ? 0x4488ff : contact.outcome === "knowledge-exchange" ? 0x44ff88 : contact.outcome === "observation" ? 0x88ccff : 0xff4444;
+    mat.emissive.setHex(phaseColor);
+    mat.color.setHex(phaseColor);
   }
 
   private updateCommunicationLinks(time: number): void {
@@ -3732,7 +3946,9 @@ export class Game {
                     ? "The climate is drying"
                     : currentRegime === "wet"
                       ? "The climate is wetting"
-                      : "Conditions are broadly stable";
+                      : simulation.alienContact && (simulation.alienContact.phase === "interpretation" || simulation.alienContact.phase === "response")
+                        ? simulation.alienContact.phase === "interpretation" ? "A non-terrestrial signal is being interpreted" : `Alien contact: ${simulation.alienContact.outcome ?? "ongoing"}`
+                        : "Conditions are broadly stable";
     const cause = simulation.mortalityRisk > 0.48
       ? "Scarcity, ecological stress, or disease is now affecting the population." + regimeNote
       : this.food < localFoodNeed * 0.55
@@ -3855,6 +4071,7 @@ export class Game {
       this.water.mesh.visible = false;
       this.cosmos.update(time, 1700);
       this.cosmos.planet.visible = true;
+      this.updateAlienSignalBeacon(time);
       return;
     }
     const cosmic = THREE.MathUtils.smoothstep(distance, 340, 680);
