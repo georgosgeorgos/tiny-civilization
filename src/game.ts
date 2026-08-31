@@ -1067,7 +1067,9 @@ export class Game {
     if (move.progress >= 1) {
       this.observerMove = null;
       if (move.observatoryView) {
+        const enteringSpecialView = move.observatoryView !== "world";
         this.observatoryView = move.observatoryView;
+        if (enteringSpecialView) this.cosmicMode = true;
         this.refreshViewReadout();
       }
     }
@@ -1645,6 +1647,8 @@ export class Game {
       this.camera.updateProjectionMatrix();
       this.observerMove = null;
       this.observatoryView = view;
+      this.cosmicMode = false;
+      this.restoreWorldVisibility();
       this.refreshViewReadout();
       this.frameObserver(new THREE.Vector3(0, 0, 0), 430);
       this.setPlanetReadout("Tidelight · the simulated home world");
@@ -1697,6 +1701,24 @@ export class Game {
   private setPlanetReadout(text: string): void {
     const readout = document.querySelector("#planet-readout");
     if (readout) readout.textContent = text;
+  }
+
+  private restoreWorldVisibility(): void {
+    this.tileGroup.visible = true;
+    this.roadGroup.visible = true;
+    this.tradeGroup.visible = true;
+    this.communicationGroup.visible = true;
+    this.peopleGroup.visible = true;
+    this.subatomic.group.visible = false;
+    this.cosmos.group.visible = false;
+    if (!this.spacecraftMode) {
+      this.terrainChunks.group.visible = true;
+      this.water.mesh.visible = true;
+      this.clouds.visible = true;
+      this.life.group.visible = true;
+      this.skyDome.visible = true;
+      if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = 0.00115;
+    }
   }
 
   private sendEnvoy(cooperate: boolean): void {
@@ -3791,7 +3813,12 @@ export class Game {
       this.hemi.intensity = 0.18;
       this.fill.intensity = 0.08;
       this.sunLight.intensity = 0.12;
+      this.sunDisc.visible = false;
+      this.moonDisc.visible = false;
       return;
+    }
+    if (this.scene.fog instanceof THREE.FogExp2 && this.scene.fog.density === 0) {
+      this.scene.fog.density = 0.00115;
     }
     this.skyDome.visible = true;
     const hour = hourFromDays(this.visualDays);
@@ -4019,6 +4046,11 @@ export class Game {
     }
     if (this.observatoryView === "subatomic" && distance > 175) {
       this.observatoryView = "world";
+      this.cosmicMode = false;
+      this.camera.near = 0.4;
+      this.camera.far = 9000;
+      this.camera.updateProjectionMatrix();
+      this.restoreWorldVisibility();
       this.refreshViewReadout();
     }
     if (this.observatoryView === "subatomic") {
