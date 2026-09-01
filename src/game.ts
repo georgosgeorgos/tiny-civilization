@@ -458,6 +458,11 @@ export class Game {
       this.tileGroup.remove(tile.mesh);
       this.tiles.delete(key);
     }
+    const isLive = (obj: THREE.Object3D) => obj.parent !== null;
+    this.swaying.splice(0, this.swaying.length, ...this.swaying.filter(isLive));
+    this.smokeStacks.splice(0, this.smokeStacks.length, ...this.smokeStacks.filter(isLive));
+    this.shrineOrbs.splice(0, this.shrineOrbs.length, ...this.shrineOrbs.filter(isLive));
+    this.nightLights.splice(0, this.nightLights.length, ...this.nightLights.filter(isLive));
   }
 
   private stampTile(q: number, r: number, sample: NonNullable<ReturnType<typeof sampleWorld>>): void {
