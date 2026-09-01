@@ -62,6 +62,7 @@ import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./s
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { generatePersonName } from "./simulation/culture.ts";
 import { shouldBirth, shouldExileHungry, computeDeaths } from "./population.ts";
+import { DiplomacyManager } from "./diplomacy-manager.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
@@ -205,9 +206,7 @@ export class Game {
   private regionalNetworkTimer = 0;
   private lifecycleTimer = 0;
   private readonly fragmentationCooldown = new Map<string, number>();
-  private readonly conflictCooldown = new Map<string, number>();
-  private readonly activeWars = new Map<string, WarState>();
-  private readonly warCooldown = new Map<string, number>();
+  private readonly diplomacyMgr = new DiplomacyManager();
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
@@ -2336,7 +2335,7 @@ export class Game {
     const year = yearFromDays(this.simDays);
     for (const society of this.societies.values()) {
       const cooldownKey = this.regionalRelationKey("player", society.islandId);
-      const cooldownUntil = this.conflictCooldown.get(cooldownKey) ?? 0;
+      const cooldownUntil = this.diplomacyMgr.conflictCooldown.get(cooldownKey) ?? 0;
       if (year < cooldownUntil) continue;
       const hasPact = society.diplomacy.messages.some((m) => m.kind === "defense-pact") || (society.diplomacy.kinshipTie && society.diplomacy.trust > 0.5);
       const contested = this.contestedResourcePressure(society);
@@ -2345,7 +2344,7 @@ export class Game {
         const negotiationChance = hasPact ? 0.25 : 0.4;
         if (roll > negotiationChance) {
           this.splitContestedTerritory(society);
-          this.conflictCooldown.set(cooldownKey, year + 5);
+          this.diplomacyMgr.conflictCooldown.set(cooldownKey, year + 5);
           this.setHint(`${society.name} negotiated a territorial settlement; contested lands are divided.`);
           continue;
         }
@@ -2415,13 +2414,13 @@ export class Game {
   private evaluateWarEscalation(year: number): void {
     for (const society of this.societies.values()) {
       const pairKey = this.regionalRelationKey("player", society.islandId);
-      if (this.activeWars.has(pairKey)) continue;
-      const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+      if (this.diplomacyMgr.activeWars.has(pairKey)) continue;
+      const cooldownEnd = this.diplomacyMgr.warCooldown.get(pairKey) ?? 0;
       if (year < cooldownEnd + 30) continue;
       if (society.relation >= -30) continue;
       if (society.diplomacy.treaty === "trade-pact" || society.diplomacy.treaty === "parley") continue;
       if (society.culture.traits.cooperation >= 0.7) continue;
-      this.activeWars.set(pairKey, createWar(society.islandId, "player", year));
+      this.diplomacyMgr.activeWars.set(pairKey, createWar(society.islandId, "player", year));
       society.diplomacy.treaty = "hostile";
       this.setHint(`${society.name} enters a period of escalation; grievances are mounting toward conflict.`);
     }
@@ -2432,25 +2431,25 @@ export class Game {
         const right = societies[b];
         if (!left || !right) continue;
         const pairKey = this.regionalRelationKey(left.islandId, right.islandId);
-        if (this.activeWars.has(pairKey)) continue;
-        const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+        if (this.diplomacyMgr.activeWars.has(pairKey)) continue;
+        const cooldownEnd = this.diplomacyMgr.warCooldown.get(pairKey) ?? 0;
         if (year < cooldownEnd + 30) continue;
         const relation = this.regionalRelations.get(pairKey);
         if (!relation || relation.stance !== "hostile") continue;
         if (left.culture.traits.cooperation >= 0.7 && right.culture.traits.cooperation >= 0.7) continue;
         if (left.relation > -20 && right.relation > -20) continue;
-        this.activeWars.set(pairKey, createWar(left.islandId, right.islandId, year));
+        this.diplomacyMgr.activeWars.set(pairKey, createWar(left.islandId, right.islandId, year));
         this.setHint(`${left.name} and ${right.name} enter a period of escalation; war may follow.`);
       }
     }
   }
 
   private advanceWars(year: number): void {
-    for (const [key, war] of this.activeWars) {
+    for (const [key, war] of this.diplomacyMgr.activeWars) {
       const aggSociety = war.aggressorId === "player" ? null : this.societies.get(war.aggressorId);
       const defSociety = war.defenderId === "player" ? null : this.societies.get(war.defenderId);
-      if (!aggSociety && war.aggressorId !== "player") { this.activeWars.delete(key); continue; }
-      if (!defSociety && war.defenderId !== "player") { this.activeWars.delete(key); continue; }
+      if (!aggSociety && war.aggressorId !== "player") { this.diplomacyMgr.activeWars.delete(key); continue; }
+      if (!defSociety && war.defenderId !== "player") { this.diplomacyMgr.activeWars.delete(key); continue; }
       const aggInputs = this.lastSimulationInputs;
       const defInputs = this.lastSimulationInputs;
       const aggSnap = aggSociety ? this.lastRegionalSnapshots.get(aggSociety.islandId) : this.simulation.snapshot;
@@ -2470,10 +2469,10 @@ export class Game {
       }
       if (next.resolved) {
         this.resolveWarOutcome(next, aggSociety ?? null, defSociety ?? null);
-        this.warCooldown.set(key, year);
-        this.activeWars.delete(key);
+        this.diplomacyMgr.warCooldown.set(key, year);
+        this.diplomacyMgr.activeWars.delete(key);
       } else {
-        this.activeWars.set(key, next);
+        this.diplomacyMgr.activeWars.set(key, next);
       }
     }
   }
@@ -2529,11 +2528,7 @@ export class Game {
 
 
   private isMobilized(regionId: string): boolean {
-    for (const war of this.activeWars.values()) {
-      if (war.phase !== "active") continue;
-      if (war.aggressorId === regionId || war.defenderId === regionId) return true;
-    }
-    return false;
+    return this.diplomacyMgr.isAtWar(regionId);
   }
 
   private societyTurn = 0;
@@ -4078,7 +4073,7 @@ export class Game {
       : "";
     const activeCatastrophe = this.catastrophe && !this.catastrophe.resolved;
     const activePandemic = simulation.pandemic && !simulation.pandemic.resolved;
-    const activeWar = this.activeWars.size > 0;
+    const activeWar = this.diplomacyMgr.activeWars.size > 0;
     const activeAlien = simulation.alienContact && (simulation.alienContact.phase === "interpretation" || simulation.alienContact.phase === "response");
     const crisisFlags: string[] = [];
     if (activeCatastrophe && this.catastrophe) {
