@@ -4083,6 +4083,7 @@ export class Game {
       outlook,
       cause,
       scenario: this.spacecraftMode ? "spacecraft" : "planet",
+      flowBreakdown: simulation.flowBreakdown,
     });
     if (this.citizens().length > 0 && this.food < 1) this.setHint("The village is hungry. Auto will try a farm or fishery.");
   }

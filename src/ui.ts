@@ -1,3 +1,5 @@
+import type { ResourceBreakdown } from "./simulation/types.ts";
+
 export type CivHudState = {
   year: number;
   season: string;
@@ -24,6 +26,7 @@ export type CivHudState = {
   outlook: string;
   cause: string;
   scenario?: "planet" | "spacecraft";
+  flowBreakdown?: { food: ResourceBreakdown; wood: ResourceBreakdown; gold: ResourceBreakdown };
 };
 
 /** Keeps presentation concerns out of the simulation loop. */
@@ -56,9 +59,10 @@ export class Hud {
     if (this.goal) this.goal.textContent = state.goal;
     if (this.clock) this.clock.textContent = `${state.clock} · ${state.sky} · Day ${state.day}`;
     const spacecraft = state.scenario === "spacecraft";
-    this.setResource(this.gold, spacecraft ? "Research" : "Gold", state.gold, Math.min(100, state.gold / 1.4));
-    this.setResource(this.food, spacecraft ? "Nutrients" : "Food", state.food, Math.min(100, state.food / Math.max(1, state.people * 3) * 100));
-    this.setResource(this.wood, spacecraft ? "Materials" : "Wood", state.wood, Math.min(100, state.wood / 0.9));
+    const bd = state.flowBreakdown;
+    this.setResource(this.gold, spacecraft ? "Research" : "Gold", state.gold, Math.min(100, state.gold / 1.4), bd?.gold);
+    this.setResource(this.food, spacecraft ? "Nutrients" : "Food", state.food, Math.min(100, state.food / Math.max(1, state.people * 3) * 100), bd?.food);
+    this.setResource(this.wood, spacecraft ? "Materials" : "Wood", state.wood, Math.min(100, state.wood / 0.9), bd?.wood);
     this.setResource(this.mood, "Mood", state.mood, state.mood);
     if (this.people) {
       const residents = state.others > 0 ? `${state.people} · ${state.others} abroad` : String(state.people);
@@ -76,10 +80,18 @@ export class Hud {
     this.setResource(this.land, spacecraft ? "Hull" : "Land", state.land, state.land);
   }
 
-  private setResource(element: HTMLElement | null, label: string, value: number, level: number): void {
+  private setResource(element: HTMLElement | null, label: string, value: number, level: number, breakdown?: ResourceBreakdown): void {
     if (!element) return;
     element.textContent = `${label} ${Math.floor(value)}`;
     element.style.setProperty("--level", `${Math.max(0, Math.min(100, level))}%`);
     element.classList.toggle("warning", level < 25);
+    if (breakdown) {
+      const parts: string[] = [];
+      if (breakdown.production > 0.01) parts.push(`+${breakdown.production.toFixed(1)} production`);
+      if (breakdown.consumption > 0.01) parts.push(`-${breakdown.consumption.toFixed(1)} consumption`);
+      if (breakdown.spoilage > 0.01) parts.push(`-${breakdown.spoilage.toFixed(1)} spoilage`);
+      if (breakdown.maintenance > 0.01) parts.push(`-${breakdown.maintenance.toFixed(1)} upkeep`);
+      element.title = parts.length > 0 ? parts.join(", ") : "";
+    }
   }
 }

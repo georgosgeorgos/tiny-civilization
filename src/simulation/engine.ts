@@ -36,6 +36,11 @@ export class SimulationEngine {
       birthReadiness: 0,
       mortalityRisk: 0,
       lastFlow: { food: 0, wood: 0, gold: 0 },
+      flowBreakdown: {
+        food: { production: 0, consumption: 0, spoilage: 0, maintenance: 0 },
+        wood: { production: 0, consumption: 0, spoilage: 0, maintenance: 0 },
+        gold: { production: 0, consumption: 0, spoilage: 0, maintenance: 0 },
+      },
       cropHealth: 0.86,
       seasonalStress: 0,
       habitatDiversity: 0.7,
@@ -111,6 +116,11 @@ export class SimulationEngine {
     this.state.stores.wood = Math.max(0, Math.min(storage.wood, this.state.stores.wood + annualFlow.wood * span));
     this.state.stores.gold = Math.max(0, Math.min(storage.gold, this.state.stores.gold + annualFlow.gold * span));
     this.state.lastFlow = annualFlow;
+    this.state.flowBreakdown = {
+      food: { production: foodProduction, consumption: foodNeed, spoilage, maintenance: 0 },
+      wood: { production: inputs.annualProduction.wood * innovationRules.extraction, consumption: 0, spoilage: 0, maintenance },
+      gold: { production: inputs.annualProduction.gold * innovationRules.trade * innovationRules.extraction, consumption: 0, spoilage: 0, maintenance: maintenance * 0.35 },
+    };
 
     const foodSecurity = clamp01(this.state.stores.food / Math.max(2, inputs.population * 2.5) + institutionRules.foodSecurity);
     const crowding = inputs.population > inputs.housing ? 0.18 : 0;
@@ -170,6 +180,11 @@ export class SimulationEngine {
       food: production.food - foodNeed - spoilage,
       wood: production.wood - maintenance,
       gold: production.gold - maintenance * 0.35,
+    };
+    this.state.flowBreakdown = {
+      food: { production: production.food, consumption: foodNeed, spoilage, maintenance: 0 },
+      wood: { production: production.wood, consumption: 0, spoilage: 0, maintenance },
+      gold: { production: production.gold, consumption: 0, spoilage: 0, maintenance: maintenance * 0.35 },
     };
     const storage = this.storageCapacity(inputs);
     this.state.stores.food = Math.max(0, Math.min(storage.food, this.state.stores.food + this.state.lastFlow.food));
