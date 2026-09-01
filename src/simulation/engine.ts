@@ -72,6 +72,12 @@ export class SimulationEngine {
     this.state.stores = { ...stores };
   }
 
+  loadCheckpoint(snapshot: SimulationSnapshot): void {
+    this.state = structuredClone(snapshot);
+    this.accumulator = 0;
+    this.lastPandemicYear = snapshot.pandemic?.startYear ?? -100;
+  }
+
   advance(inputs: SimulationInputs): Readonly<SimulationSnapshot> {
     this.accumulator += Math.max(0, inputs.deltaDays);
     const stepDays = inputs.fidelity === "remote" ? REMOTE_STEP_DAYS : LOCAL_STEP_DAYS;

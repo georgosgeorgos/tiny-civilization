@@ -45,3 +45,27 @@ export function runExperiment(plan: ExperimentPlan): ExperimentRecord {
 export function runExperimentBatch(plans: readonly ExperimentPlan[]): ExperimentRecord[] {
   return plans.map((plan) => runExperiment(plan));
 }
+
+export type BranchPlan = {
+  checkpoint: ExperimentCheckpoint;
+  seed: number;
+  inputs: Omit<SimulationInputs, "deltaDays">;
+  years: number;
+  checkpointEvery?: number;
+};
+
+export function branchExperiment(plan: BranchPlan): ExperimentCheckpoint[] {
+  const interval = Math.max(1, Math.floor(plan.checkpointEvery ?? 10));
+  const engine = new SimulationEngine(plan.seed, plan.checkpoint.snapshot.stores);
+  engine.loadCheckpoint(plan.checkpoint.snapshot);
+  const inputs = { ...plan.inputs };
+  const checkpoints: ExperimentCheckpoint[] = [{ year: plan.checkpoint.year, snapshot: structuredClone(engine.snapshot) }];
+  let elapsed = 0;
+  while (elapsed < plan.years) {
+    const span = Math.min(interval, plan.years - elapsed);
+    engine.advanceYears({ ...inputs, deltaDays: span * 12 }, span);
+    elapsed += span;
+    checkpoints.push({ year: plan.checkpoint.year + elapsed, snapshot: structuredClone(engine.snapshot) });
+  }
+  return checkpoints;
+}
