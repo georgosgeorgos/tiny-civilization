@@ -5,7 +5,7 @@ import type { RegionSimulationInput, SimulationInputs, SimulationSnapshot, Store
 /** Async browser adapter with a synchronous fallback for restricted environments. */
 export class SimulationClient {
   private readonly fallback: SimulationEngine;
-  private readonly worker: Worker | null;
+  private worker: Worker | null;
   private current: Readonly<SimulationSnapshot>;
   private pending: SimulationSnapshot | null = null;
   private stores: Stores;
@@ -26,6 +26,10 @@ export class SimulationClient {
       this.worker.onmessage = (event: MessageEvent<SimulationResponse>) => {
         if (event.data.type === "snapshot") this.pending = event.data.snapshot;
         else this.regionalPending = new Map(event.data.snapshots.map((entry) => [entry.id, entry.snapshot]));
+      };
+      this.worker.onerror = () => {
+        console.warn("Simulation worker crashed — falling back to synchronous engine");
+        this.worker = null;
       };
       this.post({ type: "init", seed, stores, knowledge });
     }

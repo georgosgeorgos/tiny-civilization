@@ -1210,6 +1210,7 @@ export class Game {
       road.rotation.y = Math.atan2(direction.z, direction.x);
       road.castShadow = true;
       road.receiveShadow = true;
+      road.userData.owner = tile.owner;
       this.roadGroup.add(road);
       this.roadEdges.set(edge, road);
     }

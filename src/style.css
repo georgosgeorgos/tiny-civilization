@@ -3,8 +3,11 @@
   --ink: #f3efe4;
   --muted: #c3d0c8;
   --panel: rgba(8, 16, 22, 0.62);
+  --gold: #f0d080;
   --wood: #d4a574;
   --mood: #f0a3c4;
+  --health: #a8e6a3;
+  --land: #c4d8a0;
   --accent: #7ce0c2;
   font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Times New Roman", serif;
 }
@@ -168,17 +171,15 @@ body,
   color: var(--muted);
 }
 
-.stats span:nth-child(4) {
-  color: var(--mood);
-}
-
-.stats span:nth-child(3) {
-  color: var(--food);
-}
-
-.stats span:nth-child(5) {
-  color: #e8b896;
-}
+#stat-gold { color: var(--gold); }
+#stat-food { color: var(--accent); }
+#stat-wood { color: var(--wood); }
+#stat-mood { color: var(--mood); }
+#stat-health { color: var(--health); }
+#stat-people { color: #e8b896; }
+#stat-land { color: var(--land); }
+#stat-evolution { color: var(--muted); font-style: italic; }
+#stat-culture { color: var(--muted); font-style: italic; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .resource {
   --level: 70%;
