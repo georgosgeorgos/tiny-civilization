@@ -61,6 +61,8 @@ import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { generatePersonName } from "./simulation/culture.ts";
+import { shouldBirth, shouldExileHungry, computeDeaths } from "./population.ts";
+import { DiplomacyManager } from "./diplomacy-manager.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
@@ -155,6 +157,7 @@ export class Game {
   private readonly nightLights: THREE.Mesh[] = [];
   private readonly peopleGroup = new THREE.Group();
   private readonly people: Person[] = [];
+  private readonly peopleByRegion = new Map<string, Person[]>();
   private readonly households = new HouseholdSystem();
   private householdMetrics: HouseholdMetrics | null = null;
   private personSerial = 0;
@@ -203,9 +206,7 @@ export class Game {
   private regionalNetworkTimer = 0;
   private lifecycleTimer = 0;
   private readonly fragmentationCooldown = new Map<string, number>();
-  private readonly conflictCooldown = new Map<string, number>();
-  private readonly activeWars = new Map<string, WarState>();
-  private readonly warCooldown = new Map<string, number>();
+  private readonly diplomacyMgr = new DiplomacyManager();
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
@@ -1268,9 +1269,10 @@ export class Game {
 
   private spawnOne(tile: Tile, role: PersonRole, index = 0, tribe = false, inherit = false): void {
     const seed = (hash2(tile.q + index + 3, tile.r + index) + index * 0.17 + this.people.length * 0.09) % 1;
+    const regionPool = this.peopleByRegion.get(tribe ? tile.islandId : "player") ?? [];
     const parent = inherit
-      ? this.people.find((person) => person.tribe === tribe && person.islandId === tile.islandId && person.age >= 18 && person.age < 60 && person.homeQ === tile.q && person.homeR === tile.r)
-        ?? this.people.find((person) => person.tribe === tribe && person.islandId === tile.islandId && person.age >= 18 && person.age < 60)
+      ? regionPool.find((person) => person.age >= 18 && person.age < 60 && person.homeQ === tile.q && person.homeR === tile.r)
+        ?? regionPool.find((person) => person.age >= 18 && person.age < 60)
       : undefined;
     const mesh = makeHuman(role, seed);
     const angle = seed * Math.PI * 2 + index * 2.15;
@@ -1307,6 +1309,7 @@ export class Game {
     this.popIns.push({ object: mesh, t: 0, target: 2.45 });
     this.peopleGroup.add(mesh);
     this.people.push(person);
+    this.addToRegionIndex(person);
   }
 
   private personWorldPos(person: Person, from: Tile, to: Tile, t: number): THREE.Vector3 {
@@ -1733,8 +1736,8 @@ export class Game {
         if (!route.delivered) {
           const risk = this.weather === "storm" ? 0.62 : this.weather === "rain" ? 0.22 : 0.04;
           const shipment = route.direction > 0
-            ? settleShipment({ stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, { stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length }, 1.35, risk)
-            : settleShipment({ stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length }, { stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, 1.35, risk);
+            ? settleShipment({ stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, { stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.regionPeople(society.islandId).length }, 1.35, risk)
+            : settleShipment({ stores: { food: society.food, wood: society.wood, gold: society.gold }, population: this.regionPeople(society.islandId).length }, { stores: { food: this.food, wood: this.wood, gold: this.gold }, population: this.citizens().length }, 1.35, risk);
           if (route.direction > 0) {
             this.food = shipment.source.food; this.wood = shipment.source.wood; this.gold = shipment.source.gold;
             society.food = shipment.destination.food; society.wood = shipment.destination.wood; society.gold = shipment.destination.gold;
@@ -1826,7 +1829,32 @@ export class Game {
   }
 
   private citizens(): Person[] {
-    return this.people.filter((person) => !person.tribe);
+    return this.peopleByRegion.get("player") ?? [];
+  }
+
+  private regionPeople(islandId: string): Person[] {
+    return this.peopleByRegion.get(islandId) ?? [];
+  }
+
+  private regionKey(person: Person): string {
+    return person.tribe ? person.islandId : "player";
+  }
+
+  private addToRegionIndex(person: Person): void {
+    const key = this.regionKey(person);
+    const list = this.peopleByRegion.get(key);
+    if (list) list.push(person);
+    else this.peopleByRegion.set(key, [person]);
+  }
+
+  private removeFromRegionIndex(person: Person): void {
+    const key = this.regionKey(person);
+    const list = this.peopleByRegion.get(key);
+    if (list) {
+      const idx = list.indexOf(person);
+      if (idx >= 0) list.splice(idx, 1);
+      if (list.length === 0) this.peopleByRegion.delete(key);
+    }
   }
 
   private canSite(id: BuildingId, islandId?: string, treasury?: { gold: number; wood: number }): boolean {
@@ -1841,7 +1869,7 @@ export class Game {
     // A region needs one founding site before it can have a territorial core.
     // Subsequent expansion remains constrained to its own evolving claim.
     if (nearby.length === 0) return tile.building === null;
-    const folk = owner === "player" ? this.citizens().length : this.people.filter((person) => person.tribe && person.islandId === tile.islandId).length;
+    const folk = owner === "player" ? this.citizens().length : this.regionPeople(tile.islandId).length;
     const morale = owner === "player" ? this.mood : this.societies.get(tile.islandId)?.mood ?? 40;
     const radius = Math.max(1.7, 1.8 + Math.min(4.5, nearby.length * 0.22 + folk * 0.08 + (morale - 45) * 0.025));
     return nearby.some((entry) => hexDistance(entry.q - tile.q, entry.r - tile.r) <= radius);
@@ -1966,7 +1994,7 @@ export class Game {
   private evaluateSocietyLifecycles(): void {
     if (this.spacecraftMode) return;
     for (const society of [...this.societies.values()]) {
-      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const population = this.regionPeople(society.islandId).length;
       const state = { population, capacity: society.populationCapacity, food: society.food, mood: society.mood, migrationPressure: society.migrationPressure, culture: society.culture };
       if (shouldSocietyCollapse(state)) {
         this.collapseSociety(society);
@@ -2046,6 +2074,7 @@ export class Game {
       this.peopleGroup.remove(person.mesh);
       this.people.splice(index, 1);
     }
+    this.peopleByRegion.delete(society.islandId);
     for (const tile of this.tiles.values()) {
       const wasHome = tile.islandId === society.islandId && tile.owner === "tribe";
       const wasClaimant = tile.claimant === society.islandId;
@@ -2187,7 +2216,7 @@ export class Game {
     const infrastructure = this.playerInfrastructure();
     for (const society of this.societies.values()) {
       const affinity = playerLanguage.family === society.culture.language.family ? 0.95 : Math.max(0.12, 1 - Math.abs(playerLanguage.boundary - society.culture.language.boundary) * 0.7);
-      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const population = this.regionPeople(society.islandId).length;
       const result = advanceDiplomaticChannel(society.diplomacy, year, {
         infrastructure: Math.min(1, infrastructure.ports * 0.35 + infrastructure.roads * 0.04 + (this.findPort("tribe", society.islandId) ? 0.28 : 0)),
         languageAffinity: affinity,
@@ -2243,8 +2272,8 @@ export class Game {
         const affinity = left.culture.language.family === right.culture.language.family
           ? 0.9
           : Math.max(0.1, 1 - Math.abs(left.culture.language.boundary - right.culture.language.boundary) * 0.62);
-        const leftPeople = this.people.filter((person) => person.tribe && person.islandId === left.islandId).length;
-        const rightPeople = this.people.filter((person) => person.tribe && person.islandId === right.islandId).length;
+        const leftPeople = this.regionPeople(left.islandId).length;
+        const rightPeople = this.regionPeople(right.islandId).length;
         const context = {
           distance,
           languageAffinity: affinity,
@@ -2268,8 +2297,8 @@ export class Game {
   private tryAutonomousDiplomaticAction(left: Society, right: Society, year: number): void {
     const roll = hash2(left.islandId.length + right.islandId.length, year);
     if (roll <= 0.85) return;
-    const leftPop = this.people.filter((person) => person.tribe && person.islandId === left.islandId).length;
-    const rightPop = this.people.filter((person) => person.tribe && person.islandId === right.islandId).length;
+    const leftPop = this.regionPeople(left.islandId).length;
+    const rightPop = this.regionPeople(right.islandId).length;
     const traits = left.culture.traits;
     const [leftQ, leftR] = left.islandId.split(",").map(Number);
     const distance = hexDistance(leftQ - Number(right.islandId.split(",")[0]), leftR - Number(right.islandId.split(",")[1]));
@@ -2327,7 +2356,7 @@ export class Game {
     const year = yearFromDays(this.simDays);
     for (const society of this.societies.values()) {
       const cooldownKey = this.regionalRelationKey("player", society.islandId);
-      const cooldownUntil = this.conflictCooldown.get(cooldownKey) ?? 0;
+      const cooldownUntil = this.diplomacyMgr.conflictCooldown.get(cooldownKey) ?? 0;
       if (year < cooldownUntil) continue;
       const hasPact = society.diplomacy.messages.some((m) => m.kind === "defense-pact") || (society.diplomacy.kinshipTie && society.diplomacy.trust > 0.5);
       const contested = this.contestedResourcePressure(society);
@@ -2336,12 +2365,12 @@ export class Game {
         const negotiationChance = hasPact ? 0.25 : 0.4;
         if (roll > negotiationChance) {
           this.splitContestedTerritory(society);
-          this.conflictCooldown.set(cooldownKey, year + 5);
+          this.diplomacyMgr.conflictCooldown.set(cooldownKey, year + 5);
           this.setHint(`${society.name} negotiated a territorial settlement; contested lands are divided.`);
           continue;
         }
       }
-      const population = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const population = this.regionPeople(society.islandId).length;
       const escalationFactor = hasPact ? 0.7 : 1;
       const result = resolveConflict({
         relation: society.relation,
@@ -2406,13 +2435,13 @@ export class Game {
   private evaluateWarEscalation(year: number): void {
     for (const society of this.societies.values()) {
       const pairKey = this.regionalRelationKey("player", society.islandId);
-      if (this.activeWars.has(pairKey)) continue;
-      const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+      if (this.diplomacyMgr.activeWars.has(pairKey)) continue;
+      const cooldownEnd = this.diplomacyMgr.warCooldown.get(pairKey) ?? 0;
       if (year < cooldownEnd + 30) continue;
       if (society.relation >= -30) continue;
       if (society.diplomacy.treaty === "trade-pact" || society.diplomacy.treaty === "parley") continue;
       if (society.culture.traits.cooperation >= 0.7) continue;
-      this.activeWars.set(pairKey, createWar(society.islandId, "player", year));
+      this.diplomacyMgr.activeWars.set(pairKey, createWar(society.islandId, "player", year));
       society.diplomacy.treaty = "hostile";
       this.setHint(`${society.name} enters a period of escalation; grievances are mounting toward conflict.`);
     }
@@ -2423,25 +2452,25 @@ export class Game {
         const right = societies[b];
         if (!left || !right) continue;
         const pairKey = this.regionalRelationKey(left.islandId, right.islandId);
-        if (this.activeWars.has(pairKey)) continue;
-        const cooldownEnd = this.warCooldown.get(pairKey) ?? 0;
+        if (this.diplomacyMgr.activeWars.has(pairKey)) continue;
+        const cooldownEnd = this.diplomacyMgr.warCooldown.get(pairKey) ?? 0;
         if (year < cooldownEnd + 30) continue;
         const relation = this.regionalRelations.get(pairKey);
         if (!relation || relation.stance !== "hostile") continue;
         if (left.culture.traits.cooperation >= 0.7 && right.culture.traits.cooperation >= 0.7) continue;
         if (left.relation > -20 && right.relation > -20) continue;
-        this.activeWars.set(pairKey, createWar(left.islandId, right.islandId, year));
+        this.diplomacyMgr.activeWars.set(pairKey, createWar(left.islandId, right.islandId, year));
         this.setHint(`${left.name} and ${right.name} enter a period of escalation; war may follow.`);
       }
     }
   }
 
   private advanceWars(year: number): void {
-    for (const [key, war] of this.activeWars) {
+    for (const [key, war] of this.diplomacyMgr.activeWars) {
       const aggSociety = war.aggressorId === "player" ? null : this.societies.get(war.aggressorId);
       const defSociety = war.defenderId === "player" ? null : this.societies.get(war.defenderId);
-      if (!aggSociety && war.aggressorId !== "player") { this.activeWars.delete(key); continue; }
-      if (!defSociety && war.defenderId !== "player") { this.activeWars.delete(key); continue; }
+      if (!aggSociety && war.aggressorId !== "player") { this.diplomacyMgr.activeWars.delete(key); continue; }
+      if (!defSociety && war.defenderId !== "player") { this.diplomacyMgr.activeWars.delete(key); continue; }
       const aggInputs = this.lastSimulationInputs;
       const defInputs = this.lastSimulationInputs;
       const aggSnap = aggSociety ? this.lastRegionalSnapshots.get(aggSociety.islandId) : this.simulation.snapshot;
@@ -2449,7 +2478,7 @@ export class Game {
       if (!aggInputs || !defInputs || !aggSnap || !defSnap) continue;
       const aggStr = computeStrength(aggInputs, aggSnap);
       const defStr = computeStrength(defInputs, defSnap);
-      const scarcity = aggSociety ? Math.max(0, 1 - aggSociety.food / Math.max(3, this.people.filter((p) => p.tribe && p.islandId === aggSociety.islandId).length * 2.5)) : Math.max(0, 1 - this.food / Math.max(3, this.citizens().length * 2.5));
+      const scarcity = aggSociety ? Math.max(0, 1 - aggSociety.food / Math.max(3, this.regionPeople(aggSociety.islandId).length * 2.5)) : Math.max(0, 1 - this.food / Math.max(3, this.citizens().length * 2.5));
       const grievance = aggSociety ? Math.max(0, -aggSociety.relation / 45) : 0.5;
       const warRisk = grievance * 0.48 + scarcity * 0.34;
       const negotiationRoll = hash2(key.length + year, year * 7);
@@ -2461,10 +2490,10 @@ export class Game {
       }
       if (next.resolved) {
         this.resolveWarOutcome(next, aggSociety ?? null, defSociety ?? null);
-        this.warCooldown.set(key, year);
-        this.activeWars.delete(key);
+        this.diplomacyMgr.warCooldown.set(key, year);
+        this.diplomacyMgr.activeWars.delete(key);
       } else {
-        this.activeWars.set(key, next);
+        this.diplomacyMgr.activeWars.set(key, next);
       }
     }
   }
@@ -2520,11 +2549,7 @@ export class Game {
 
 
   private isMobilized(regionId: string): boolean {
-    for (const war of this.activeWars.values()) {
-      if (war.phase !== "active") continue;
-      if (war.aggressorId === regionId || war.defenderId === regionId) return true;
-    }
-    return false;
+    return this.diplomacyMgr.isAtWar(regionId);
   }
 
   private societyTurn = 0;
@@ -2544,7 +2569,7 @@ export class Game {
         housing += BUILDINGS[tile.building].housing;
         buildingTotal += 1;
       }
-      const people = this.people.filter((person) => person.tribe && person.islandId === society.islandId).length;
+      const people = this.regionPeople(society.islandId).length;
       const stage = developmentStage(people, buildingTotal);
       society.stage = stage;
       if (buildingTotal >= 14 + ["Camp", "Hamlet", "Village", "Town", "City"].indexOf(stage) * 7) continue;
@@ -2806,7 +2831,7 @@ export class Game {
       })),
       [
         { id: "player", food: this.food, housing, mood: this.mood, environmentalStress: THREE.MathUtils.clamp(1 - (this.simulation.snapshot.ecology.water + this.simulation.snapshot.climate.rainfall) * 0.5, 0, 1) },
-        ...[...this.societies.values()].map((society) => ({ id: society.islandId, food: society.food, housing: this.housingOf("tribe", society.islandId), mood: society.mood, environmentalStress: THREE.MathUtils.clamp(1 - society.food / Math.max(4, this.people.filter((person) => person.tribe && person.islandId === society.islandId).length * 2.4), 0, 1) })),
+        ...[...this.societies.values()].map((society) => ({ id: society.islandId, food: society.food, housing: this.housingOf("tribe", society.islandId), mood: society.mood, environmentalStress: THREE.MathUtils.clamp(1 - society.food / Math.max(4, this.regionPeople(society.islandId).length * 2.4), 0, 1) })),
       ],
       simDt / YEAR_SECONDS,
     );
@@ -2892,7 +2917,7 @@ export class Game {
     const regionalInputs: RegionSimulationInput[] = [];
     for (const society of this.societies.values()) {
       const yieldNow = societyYield.get(society.islandId) ?? { food: 0, gold: 0, wood: 0 };
-      const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
+      const tribe = this.regionPeople(society.islandId);
       let tribeHappiness = 42;
       let tribeHousing = 0;
       const counts = emptyCounts();
@@ -3189,7 +3214,7 @@ export class Game {
   }
 
   private regionalTradeOpenness(id: string): number {
-    const residents = this.people.filter((person) => (id === "player" ? !person.tribe : person.tribe && person.islandId === id));
+    const residents = this.peopleByRegion.get(id) ?? [];
     if (residents.length === 0) return 0.5;
     return residents.reduce((total, person) => total + person.strategy.tradeOpenness, 0) / residents.length;
   }
@@ -3237,7 +3262,7 @@ export class Game {
         : 0;
       regions.push({
         id: society.islandId, q, r,
-        population: this.people.filter((person) => person.tribe && person.islandId === society.islandId).length,
+        population: this.regionPeople(society.islandId).length,
         capacity: society.populationCapacity, food: society.food, wood: society.wood, gold: society.gold,
         knowledge: society.knowledge, stability: society.mood / 100, migrationPressure: society.migrationPressure,
         markets: tiles.filter((tile) => tile.building === "market").length,
@@ -3501,12 +3526,7 @@ export class Game {
   }
 
   private moveResident(originId: string, destinationId: string): boolean {
-    const originTribe = originId !== "player";
-    const resident = this.people
-      .filter((person) => person.tribe === originTribe && (originTribe ? person.islandId === originId : true))
-      // Displacement chooses households with the most urgent hardship. A
-      // mobile disposition instead improves coping after arrival, so scarcity
-      // does not automatically export the trait it is selecting for.
+    const resident = [...(this.peopleByRegion.get(originId) ?? [])]
       .sort((left, right) => this.households.hardshipFor(right.id) - this.households.hardshipFor(left.id) || left.seed - right.seed)[0];
     const destinationTribe = destinationId !== "player";
     const home = [...this.tiles.values()].find(
@@ -3515,8 +3535,10 @@ export class Game {
         (!destinationTribe || tile.islandId === destinationId),
     );
     if (!resident || !home) return false;
+    this.removeFromRegionIndex(resident);
     resident.tribe = destinationTribe;
     resident.islandId = home.islandId;
+    this.addToRegionIndex(resident);
     resident.q = home.q;
     resident.r = home.r;
     resident.destQ = home.q;
@@ -3546,36 +3568,20 @@ export class Game {
   }
 
   private advanceAges(year: number): void {
-    const regionPop = new Map<string, number>();
-    for (const person of this.people) {
-      const key = person.tribe ? person.islandId : "player";
-      regionPop.set(key, (regionPop.get(key) ?? 0) + 1);
-    }
-    const toRemove: number[] = [];
-    for (let i = 0; i < this.people.length; i++) {
-      const person = this.people[i];
-      person.age += 1;
-      if (person.age >= 78) {
-        const regionKey = person.tribe ? person.islandId : "player";
-        if ((regionPop.get(regionKey) ?? 0) <= 6) continue;
-        const mortalityChance = 0.15 + (person.age - 78) * 0.08;
-        if (hash2(person.seed + year * 0.0037, year) < mortalityChance) {
-          toRemove.push(i);
-          regionPop.set(regionKey, (regionPop.get(regionKey) ?? 1) - 1);
-        }
-      }
-    }
-    const deceasedNames = toRemove.map(i => this.people[i]?.name).filter(Boolean);
-    for (let i = toRemove.length - 1; i >= 0; i--) {
-      const person = this.people[toRemove[i]];
+    for (const person of this.people) person.age += 1;
+    const deaths = computeDeaths(this.people, year, hash2);
+    for (let i = deaths.length - 1; i >= 0; i--) {
+      const person = this.people[deaths[i]!.personIndex];
       this.checkKnowledgeLoss(person);
+      this.removeFromRegionIndex(person);
       this.peopleGroup.remove(person.mesh);
-      this.people.splice(toRemove[i], 1);
+      this.people.splice(deaths[i]!.personIndex, 1);
     }
-    if (toRemove.length > 0) {
+    if (deaths.length > 0) {
       this.assignHomes();
       this.assignJobs();
-      this.setHint(deceasedNames.length === 1 ? `${deceasedNames[0]} passed away.` : `${deceasedNames[0]} and ${deceasedNames.length - 1} other${deceasedNames.length > 2 ? "s" : ""} passed away this year.`);
+      const names = deaths.map(d => d.name);
+      this.setHint(names.length === 1 ? `${names[0]} passed away.` : `${names[0]} and ${names.length - 1} other${names.length > 2 ? "s" : ""} passed away this year.`);
     }
   }
 
@@ -3758,6 +3764,7 @@ export class Game {
     for (const idx of uniquePersons) {
       const person = this.people[idx];
       if (person) {
+        this.removeFromRegionIndex(person);
         this.peopleGroup.remove(person.mesh);
         this.people.splice(idx, 1);
       }
@@ -3778,67 +3785,70 @@ export class Game {
   }
 
   private tryBirths(): void {
-    const folk = this.citizens();
-    const housing = this.housingOf("player");
-    if (this.simulation.snapshot.birthReadiness > 0.34 && (this.householdMetrics?.birthReadiness ?? 0.5) > 0.42 && folk.length < housing && this.food > 4) {
-      const hut = [...this.tiles.values()].find(
-        (tile) => tile.building === "hut" && tile.owner === "player" && tile.buildLeft <= 0,
-      );
-      if (hut) {
-        this.spawnOne(hut, "villager", 0, false, true);
-        this.assignHomes();
-        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A child"} came of age in the village.`);
-        return;
-      }
-    }
-    for (const society of this.societies.values()) {
-      const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
-      const homes = this.housingOf("tribe", society.islandId);
-      if (society.food <= tribe.length * 1.7 || tribe.length >= homes || society.food <= 4) continue;
-      const hut = [...this.tiles.values()].find(
-        (tile) =>
-          tile.building === "hut" &&
-          tile.owner === "tribe" &&
-          tile.islandId === society.islandId &&
-          tile.buildLeft <= 0,
-      );
-      if (!hut) continue;
-      this.spawnOne(hut, "villager", 0, true, true);
-      this.assignHomes();
-      this.setHint(`${society.name} welcomed a new villager.`);
-      return;
-    }
+    const societies = new Map(
+      [...this.societies.values()].map(s => [s.islandId, {
+        islandId: s.islandId, name: s.name, food: s.food,
+        populationCount: this.regionPeople(s.islandId).length,
+        housing: this.housingOf("tribe", s.islandId),
+      }]),
+    );
+    const candidate = shouldBirth({
+      playerCitizenCount: this.citizens().length,
+      playerHousing: this.housingOf("player"),
+      food: this.food,
+      birthReadiness: this.simulation.snapshot.birthReadiness,
+      mortalityRisk: this.simulation.snapshot.mortalityRisk,
+      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
+      societies,
+    });
+    if (!candidate) return;
+    const owner = candidate.tribe ? "tribe" : "player";
+    const hut = [...this.tiles.values()].find(
+      (tile) => tile.building === "hut" && tile.owner === owner && tile.buildLeft <= 0 &&
+        (!candidate.tribe || tile.islandId === candidate.islandId),
+    );
+    if (!hut) return;
+    this.spawnOne(hut, candidate.role, 0, candidate.tribe, true);
+    this.assignHomes();
+    const name = this.people[this.people.length - 1]?.name ?? "A child";
+    this.setHint(candidate.tribe ? `${candidate.societyName} welcomed a new villager.` : `${name} came of age in the village.`);
   }
 
   private tryHunger(): void {
-    if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.48) {
-      const exiled = this.exileHungry(false);
-      if (exiled) this.setHint(`${exiled} left the village, driven by hardship.`);
-      return;
-    }
-    for (const society of this.societies.values()) {
-      const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
-      if (tribe.length <= 1 || society.food >= 0.5) continue;
-      const exiled = this.exileHungry(true, society.islandId);
-      if (exiled) this.setHint(`${exiled} of ${society.name} was lost to hunger.`);
-      return;
-    }
+    const societies = new Map(
+      [...this.societies.values()].map(s => [s.islandId, {
+        islandId: s.islandId, name: s.name, food: s.food,
+        populationCount: this.regionPeople(s.islandId).length,
+        housing: this.housingOf("tribe", s.islandId),
+      }]),
+    );
+    const exile = shouldExileHungry({
+      playerCitizenCount: this.citizens().length,
+      playerHousing: this.housingOf("player"),
+      food: this.food,
+      birthReadiness: this.simulation.snapshot.birthReadiness,
+      mortalityRisk: this.simulation.snapshot.mortalityRisk,
+      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
+      societies,
+    });
+    if (!exile) return;
+    const name = this.exileHungry(exile.tribe, exile.islandId);
+    if (!name) return;
+    this.setHint(exile.tribe ? `${name} of ${exile.societyName} was lost to hunger.` : `${name} left the village, driven by hardship.`);
   }
 
   private exileHungry(tribe: boolean, islandId?: string): string | null {
     const preferred = !tribe ? this.householdMetrics?.vulnerableResidentId : null;
+    const regionKey = tribe ? islandId! : "player";
+    const pool = this.peopleByRegion.get(regionKey) ?? [];
     const person =
-      (preferred ? this.people.find((entry) => entry.id === preferred && entry.tribe === tribe) : undefined) ??
-      this.people.find(
-        (entry) =>
-          entry.tribe === tribe &&
-          entry.role === "villager" &&
-          (islandId ? entry.islandId === islandId : true),
-      ) ??
-      this.people.find((entry) => entry.tribe === tribe && (islandId ? entry.islandId === islandId : true));
+      (preferred ? pool.find((entry) => entry.id === preferred) : undefined) ??
+      pool.find((entry) => entry.role === "villager") ??
+      pool[0] ?? null;
     if (!person) return null;
     const name = person.name;
     this.checkKnowledgeLoss(person);
+    this.removeFromRegionIndex(person);
     this.peopleGroup.remove(person.mesh);
     this.people.splice(this.people.indexOf(person), 1);
     this.assignJobs();
@@ -4084,7 +4094,7 @@ export class Game {
       : "";
     const activeCatastrophe = this.catastrophe && !this.catastrophe.resolved;
     const activePandemic = simulation.pandemic && !simulation.pandemic.resolved;
-    const activeWar = this.activeWars.size > 0;
+    const activeWar = this.diplomacyMgr.activeWars.size > 0;
     const activeAlien = simulation.alienContact && (simulation.alienContact.phase === "interpretation" || simulation.alienContact.phase === "response");
     const crisisFlags: string[] = [];
     if (activeCatastrophe && this.catastrophe) {
@@ -4118,7 +4128,7 @@ export class Game {
       goal: this.goalLabel(),
       clock: `${timeOfDay(hour)} ${clock}`, sky: skyWithFlags, day: dayOfSeason(this.simDays), gold: this.gold,
       food: this.food, wood: this.wood, mood: this.mood, people: snap.people,
-      others: this.people.filter((person) => person.tribe).length, towns: this.societies.size, tradeRoutes: this.tradeRoutes.size, housing: snap.housing,
+      others: this.people.length - this.citizens().length, towns: this.societies.size, tradeRoutes: this.tradeRoutes.size, housing: snap.housing,
       technology: this.techLevel(),
       evolution: simulation.era,
       capacity: simulation.populationCapacity,
