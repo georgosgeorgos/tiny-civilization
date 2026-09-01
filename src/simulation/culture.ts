@@ -15,6 +15,15 @@ export type CultureContext = {
   inputs: SimulationInputs;
 };
 
+const GIVEN_NAMES = ["Aru", "Bel", "Cai", "Dara", "Esh", "Ilo", "Keth", "Mara", "Nai", "Oru", "Seli", "Tavi"];
+const SUFFIXES = ["an", "en", "esh", "in", "or", "ra", "un", "yth", "a", "i", "o"];
+
+export function generatePersonName(lineage: string, seed: number): string {
+  const given = GIVEN_NAMES[Math.floor(((seed * 7919) % 1) * GIVEN_NAMES.length) % GIVEN_NAMES.length]!;
+  const suffix = SUFFIXES[Math.floor(((seed * 6271) % 1) * SUFFIXES.length) % SUFFIXES.length]!;
+  return `${given}${suffix} ${lineage}`;
+}
+
 export function createCulture(seed: number): CulturalState {
   const random = new SeededRandom(seed ^ 0x1f123bb5);
   const first = ["Aru", "Bel", "Cai", "Dara", "Esh", "Ilo", "Keth", "Mara", "Nai", "Oru", "Seli", "Tavi"];

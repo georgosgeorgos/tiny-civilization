@@ -40,6 +40,7 @@ export type Tile = {
 
 export type Person = {
   id: string;
+  name: string;
   mesh: THREE.Group;
   q: number;
   r: number;

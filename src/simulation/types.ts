@@ -6,6 +6,13 @@ import type { InstitutionState } from "./institutions.ts";
 import type { InnovationState } from "./innovation.ts";
 
 export type Stores = { food: number; wood: number; gold: number };
+
+export type ResourceBreakdown = {
+  production: number;
+  consumption: number;
+  spoilage: number;
+  maintenance: number;
+};
 /** Regional fields derived from the persistent cellular landscape. */
 export type Ecology = {
   soil: number;
@@ -69,6 +76,7 @@ export type SimulationSnapshot = {
   birthReadiness: number;
   mortalityRisk: number;
   lastFlow: Stores;
+  flowBreakdown: { food: ResourceBreakdown; wood: ResourceBreakdown; gold: ResourceBreakdown };
   /** Local crop condition is simulated separately from stored food. */
   cropHealth: number;
   /** A compact measure used when a distant settlement is fast-forwarded. */

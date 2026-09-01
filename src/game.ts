@@ -60,6 +60,7 @@ import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInp
 import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
+import { generatePersonName } from "./simulation/culture.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
@@ -141,7 +142,7 @@ export class Game {
   private readonly communicationGroup = new THREE.Group();
   private readonly communicationLinks = new Map<string, CommunicationLink>();
   private readonly regionalRelations = new Map<string, RegionalRelation>();
-  private readonly activityLog: string[] = [];
+  private readonly activityLog: { message: string; kind: import("./simulation/manifest.ts").ChronicleEventKind; year: number; season: string }[] = [];
   private readonly water: WaterSystem;
   private readonly clouds: THREE.Group;
   private readonly cosmos: CosmicSystem;
@@ -208,6 +209,7 @@ export class Game {
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
+  private prevCrisisState = { pandemic: false, war: false, catastrophe: false, alien: false, collapse: false };
   private growTimer = 0;
   private hungerTimer = 0;
   private seeded = false;
@@ -1007,7 +1009,7 @@ export class Game {
       this.societyLensIndex += 1;
       if (citizen) {
         const tile = this.tiles.get(hexKey(citizen.q, citizen.r));
-        if (tile) frame(tile, 16, "Citizen lens. This resident's daily movement makes local work visible.");
+        if (tile) frame(tile, 16, `Observing ${citizen.name}, age ${Math.floor(citizen.age)}. ${citizen.role === "villager" ? "A resident" : citizen.role === "fisher" ? "A fisher" : citizen.role === "farmer" ? "A farmer" : citizen.role === "miner" ? "A miner" : citizen.role === "woodcutter" ? "A woodcutter" : "A worker"} of the village.`);
       }
       return;
     }
@@ -1263,8 +1265,10 @@ export class Game {
     const mesh = makeHuman(role, seed);
     const angle = seed * Math.PI * 2 + index * 2.15;
     const offset = new THREE.Vector3(Math.cos(angle) * 0.52, 0, Math.sin(angle) * 0.52);
+    const lineage = tribe ? (this.societies.get(tile.islandId)?.culture.lineage ?? this.simulation.snapshot.culture.lineage) : this.simulation.snapshot.culture.lineage;
     const person: Person = {
       id: `resident-${this.personSerial++}`,
+      name: generatePersonName(lineage, seed + this.personSerial * 0.0031),
       mesh,
       q: tile.q,
       r: tile.r,
@@ -2059,6 +2063,7 @@ export class Game {
     this.assignHomes();
     this.assignJobs();
     this.setHint(`${society.name} collapses; its abandoned works become a memory for a future settlement.`);
+    this.hud.showBanner(`${society.name} has fallen`, "crisis");
   }
 
   private seedAnimals(): void {
@@ -2859,7 +2864,7 @@ export class Game {
         this.assignHomes();
         this.assignJobs();
         this.migrationResolved = true;
-        this.setHint("A migrant joins the settlement.");
+        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A migrant"} joins the settlement.`);
       }
     }
 
@@ -3004,6 +3009,7 @@ export class Game {
     if (snapshot.originCrisis && snapshot.originCrisis.outcome !== this.lastOriginCrisis) {
       this.lastOriginCrisis = snapshot.originCrisis.outcome;
       this.setHint(`Year ${snapshot.originCrisis.year}: ${this.originProfile.title} faces ${snapshot.originCrisis.outcome}. Its institutions and knowledge path will now remember this fork.`);
+      this.hud.showBanner(`The ${this.originProfile.title.toLowerCase()} faces its first crisis: ${snapshot.originCrisis.outcome}`, "warning");
     }
     const alien = snapshot.alienContact;
     if (alien && alien.phase !== this.lastAlienPhase) {
@@ -3504,7 +3510,7 @@ export class Game {
     resident.mesh.position.copy(this.tileTop(home).add(resident.offset));
     this.assignHomes();
     this.assignJobs();
-    this.setHint(`${originId === "player" ? "A villager" : "A migrant"} resettled in ${destinationId === "player" ? "your civilization" : this.societies.get(destinationId)?.name ?? "a neighboring region"}.`);
+    this.setHint(`${resident.name} resettled in ${destinationId === "player" ? "the village" : this.societies.get(destinationId)?.name ?? "a neighboring region"}.`);
     return true;
   }
 
@@ -3538,6 +3544,7 @@ export class Game {
         }
       }
     }
+    const deceasedNames = toRemove.map(i => this.people[i]?.name).filter(Boolean);
     for (let i = toRemove.length - 1; i >= 0; i--) {
       const person = this.people[toRemove[i]];
       this.checkKnowledgeLoss(person);
@@ -3547,7 +3554,7 @@ export class Game {
     if (toRemove.length > 0) {
       this.assignHomes();
       this.assignJobs();
-      this.setHint(`${toRemove.length === 1 ? "An elder" : "Elders"} passed away this year.`);
+      this.setHint(deceasedNames.length === 1 ? `${deceasedNames[0]} passed away.` : `${deceasedNames[0]} and ${deceasedNames.length - 1} other${deceasedNames.length > 2 ? "s" : ""} passed away this year.`);
     }
   }
 
@@ -3759,7 +3766,7 @@ export class Game {
       if (hut) {
         this.spawnOne(hut, "villager", 0, false, true);
         this.assignHomes();
-        this.setHint("A child of the village came of age.");
+        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A child"} came of age in the village.`);
         return;
       }
     }
@@ -3784,20 +3791,20 @@ export class Game {
 
   private tryHunger(): void {
     if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.48) {
-      const gone = this.exileHungry(false);
-      if (gone) this.setHint("Disease, hunger, or insecurity drove a villager to leave.");
+      const exiled = this.exileHungry(false);
+      if (exiled) this.setHint(`${exiled} left the village, driven by hardship.`);
       return;
     }
     for (const society of this.societies.values()) {
       const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
       if (tribe.length <= 1 || society.food >= 0.5) continue;
-      const gone = this.exileHungry(true, society.islandId);
-      if (gone) this.setHint(`${society.name} lost a villager to hunger.`);
+      const exiled = this.exileHungry(true, society.islandId);
+      if (exiled) this.setHint(`${exiled} of ${society.name} was lost to hunger.`);
       return;
     }
   }
 
-  private exileHungry(tribe: boolean, islandId?: string): boolean {
+  private exileHungry(tribe: boolean, islandId?: string): string | null {
     const preferred = !tribe ? this.householdMetrics?.vulnerableResidentId : null;
     const person =
       (preferred ? this.people.find((entry) => entry.id === preferred && entry.tribe === tribe) : undefined) ??
@@ -3808,12 +3815,13 @@ export class Game {
           (islandId ? entry.islandId === islandId : true),
       ) ??
       this.people.find((entry) => entry.tribe === tribe && (islandId ? entry.islandId === islandId : true));
-    if (!person) return false;
+    if (!person) return null;
+    const name = person.name;
     this.checkKnowledgeLoss(person);
     this.peopleGroup.remove(person.mesh);
     this.people.splice(this.people.indexOf(person), 1);
     this.assignJobs();
-    return true;
+    return name;
   }
 
   private applySeason(season: Season): void {
@@ -4067,6 +4075,22 @@ export class Game {
     if (activeAlien) crisisFlags.push("Signal");
     if (simulation.diseaseOutbreak) crisisFlags.push("Epidemic");
     const skyWithFlags = crisisFlags.length > 0 ? `${sky} · ${crisisFlags.join(" · ")}` : sky;
+    const now = { pandemic: !!activePandemic, war: activeWar, catastrophe: !!activeCatastrophe, alien: !!activeAlien, collapse: false };
+    if (now.pandemic && !this.prevCrisisState.pandemic) {
+      this.hud.showBanner("A plague spreads through the settlement", "crisis");
+    } else if (now.war && !this.prevCrisisState.war) {
+      this.hud.showBanner("War has broken out", "crisis");
+    } else if (now.catastrophe && !this.prevCrisisState.catastrophe && this.catastrophe) {
+      const label = this.catastrophe.kind === "earthquake" ? "An earthquake" : this.catastrophe.kind === "eruption" ? "A volcanic eruption" : this.catastrophe.kind === "meteorite" ? "A meteorite strike" : this.catastrophe.kind === "tsunami" ? "A tsunami" : "A locust swarm";
+      this.hud.showBanner(`${label} strikes the region`, "crisis");
+    } else if (now.alien && !this.prevCrisisState.alien) {
+      this.hud.showBanner("An anomalous signal has been detected", "wonder");
+    } else if (!now.pandemic && this.prevCrisisState.pandemic) {
+      this.hud.showBanner("The plague has passed", "triumph");
+    } else if (!now.war && this.prevCrisisState.war) {
+      this.hud.showBanner("Peace has returned", "triumph");
+    }
+    this.prevCrisisState = now;
     const { outlook, cause } = this.computeOutlook(simulation, localFoodNeed, currentRegime, regimeNote, activeCatastrophe, activePandemic, activeWar, activeAlien);
     this.hud.refresh({
       year: yearFromDays(this.simDays), season: this.season, era: eraName(snap.people, snap.buildingTotal),
@@ -4083,20 +4107,27 @@ export class Game {
       outlook,
       cause,
       scenario: this.spacecraftMode ? "spacecraft" : "planet",
+      flowBreakdown: simulation.flowBreakdown,
     });
     if (this.citizens().length > 0 && this.food < 1) this.setHint("The village is hungry. Auto will try a farm or fishery.");
   }
 
   private setHint(text: string): void {
     this.hud.setHint(text);
-    if (this.activityLog[0] === text) return;
-    this.activityLog.unshift(text);
+    if (this.activityLog.length > 0 && this.activityLog[0]!.message === text) return;
+    const kind = classifyChronicleEvent(text);
+    const year = yearFromDays(this.simDays);
+    this.activityLog.unshift({ message: text, kind, year, season: this.season });
     this.activityLog.splice(8);
     const feed = document.querySelector("#activity-feed");
-    if (feed) feed.innerHTML = this.activityLog.map((entry) => `<li>${entry}</li>`).join("");
+    if (feed) {
+      feed.innerHTML = this.activityLog
+        .map((entry) => `<li class="feed-${entry.kind}"><span class="feed-time">Y${entry.year}</span> ${entry.message}</li>`)
+        .join("");
+    }
     this.chronicle.record(
       this.simDays,
-      classifyChronicleEvent(text),
+      kind,
       text,
       ["player", ...this.societies.keys()],
       { population: this.citizens().length, food: this.food, gold: this.gold, knowledge: this.technology, towns: this.societies.size },
