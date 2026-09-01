@@ -74,12 +74,16 @@ export function evolvePracticesAndLanguage(current: CulturalState, context: Cult
 
   const practices = new Set(current.practices);
   const institutionCount = context.inputs.buildings.market + context.inputs.buildings.shrine + context.inputs.buildings.forge;
-  if (traits.stewardship > 0.54 && context.ecology.soil < 0.7) practices.add("soil-rest covenant");
-  if (traits.cooperation > 0.56 && scarcity > 0.25) practices.add("common granary");
-  if (traits.mobility > 0.58 && context.inputs.infrastructure.ports + context.inputs.infrastructure.tradeRoutes > 0) practices.add("wayfinding compact");
-  if (traits.curiosity > 0.6 && institutionCount >= 2) practices.add("open archive");
-  if (traits.resilience > 0.62 && disruption > 0.2) practices.add("storm ledger");
-  if (traits.cooperation > 0.62 && traits.curiosity > 0.58 && context.landscape.habitatDiversity > 0.48) practices.add("living commons");
+  const tryDiscover = (name: string, eligible: boolean, probability = 0.18) => {
+    if (practices.has(name) || !eligible) return;
+    if (random.next() < probability * span) practices.add(name);
+  };
+  tryDiscover("soil-rest covenant", traits.stewardship > 0.54 && context.ecology.soil < 0.7, 0.20);
+  tryDiscover("common granary", traits.cooperation > 0.56 && scarcity > 0.25, 0.22);
+  tryDiscover("wayfinding compact", traits.mobility > 0.58 && context.inputs.infrastructure.ports + context.inputs.infrastructure.tradeRoutes > 0, 0.18);
+  tryDiscover("open archive", traits.curiosity > 0.6 && institutionCount >= 2, 0.15);
+  tryDiscover("storm ledger", traits.resilience > 0.62 && disruption > 0.2, 0.20);
+  tryDiscover("living commons", traits.cooperation > 0.62 && traits.curiosity > 0.58 && context.landscape.habitatDiversity > 0.48, 0.12);
   const maxPractices = Math.max(0, 6 - blockedSlots);
   const retained = [...practices].sort().slice(-maxPractices);
   const language = structuredClone(current.language);

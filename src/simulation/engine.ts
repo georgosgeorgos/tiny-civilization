@@ -313,7 +313,7 @@ export class SimulationEngine {
   private updateInnovations(inputs: SimulationInputs): void {
     this.state.innovations = evolveInnovations(this.state.innovations, {
       inputs, ecology: this.state.ecology, culture: this.state.culture, knowledge: this.state.knowledge,
-    });
+    }, this.random);
   }
 
   private crisisRules(): { food: number; knowledge: number } {
