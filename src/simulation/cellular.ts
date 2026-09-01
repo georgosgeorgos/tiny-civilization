@@ -120,12 +120,16 @@ export class CellularEcology {
         const fishPressure = regionalFishPressure + (use === LAND_USE.fishery ? (1 - stewardship * 0.2) : 0);
         const minePressure = regionalMinePressure + (use === LAND_USE.mine ? 1 : 0);
         const buildingHere = use === 0 ? 0 : Math.max(0, 0.25 + suitability * 1.6 - localSettlement * 0.04);
-        soilNext[i] = clamp(this.soil[i] + dt * (0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 + pSoil - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
-        forestNext[i] = clamp(this.forest[i] + dt * (0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 + pForest - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
+        const soilLogistic = this.soil[i] * (1 - this.soil[i]) * 4;
+        const forestLogistic = this.forest[i] * (1 - this.forest[i]) * 4;
+        const fishLogistic = this.fish[i] * (1 - this.fish[i]) * 4;
+        const waterLogistic = this.water[i] * (1 - this.water[i]) * 4;
+        soilNext[i] = clamp(this.soil[i] + dt * ((0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 + pSoil) * soilLogistic - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
+        forestNext[i] = clamp(this.forest[i] + dt * ((0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 + pForest) * forestLogistic - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
         const fishPractice = pFish * (coast ? 1 : 0.5);
-        fishNext[i] = clamp(this.fish[i] + dt * (0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 + fishPractice - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
+        fishNext[i] = clamp(this.fish[i] + dt * ((0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 + fishPractice) * fishLogistic - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
         waterNext[i] = clamp(this.water[i] + dt * (
-          0.024 * suitability + 0.065 * (neighbours.water - this.water[i]) + coast * 0.028 + stewardship * 0.006 + pWater -
+          (0.024 * suitability + 0.065 * (neighbours.water - this.water[i]) + coast * 0.028 + stewardship * 0.006 + pWater) * waterLogistic -
           farmPressure * (0.16 + suitability * 0.18) + rainfall * 0.025 - drought * 0.18 - localSettlement * 0.011
         ));
         const mineralRecovery = use !== LAND_USE.mine ? 0.0001 : 0;

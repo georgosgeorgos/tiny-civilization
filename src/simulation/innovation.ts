@@ -1,3 +1,4 @@
+import type { SeededRandom } from "./random.ts";
 import type { CulturalState, Ecology, SimulationInputs } from "./types.ts";
 
 export type Technique =
@@ -24,10 +25,11 @@ export function innovationEffects(state: InnovationState): InnovationEffects {
 
 /** A directed capability graph with deliberately redundant paths. Discoveries
  * are conditionally retained, attributable, and need no random unlock roll. */
-export function evolveInnovations(current: InnovationState, context: { inputs: SimulationInputs; ecology: Ecology; culture: CulturalState; knowledge: number }): InnovationState {
+export function evolveInnovations(current: InnovationState, context: { inputs: SimulationInputs; ecology: Ecology; culture: CulturalState; knowledge: number }, random?: SeededRandom): InnovationState {
   const next: InnovationState = { techniques: [...current.techniques], provenance: { ...current.provenance } };
   const discover = (technique: Technique, source: string, condition: boolean) => {
     if (!condition || has(next, technique)) return;
+    if (random && random.next() > 0.25) return;
     next.techniques.push(technique);
     next.provenance[technique] = source;
   };
