@@ -60,6 +60,7 @@ import type { CulturalState, CultureTraits, RegionSimulationInput, SimulationInp
 import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
+import { generatePersonName } from "./simulation/culture.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
@@ -1008,7 +1009,7 @@ export class Game {
       this.societyLensIndex += 1;
       if (citizen) {
         const tile = this.tiles.get(hexKey(citizen.q, citizen.r));
-        if (tile) frame(tile, 16, "Citizen lens. This resident's daily movement makes local work visible.");
+        if (tile) frame(tile, 16, `Observing ${citizen.name}, age ${Math.floor(citizen.age)}. ${citizen.role === "villager" ? "A resident" : citizen.role === "fisher" ? "A fisher" : citizen.role === "farmer" ? "A farmer" : citizen.role === "miner" ? "A miner" : citizen.role === "woodcutter" ? "A woodcutter" : "A worker"} of the village.`);
       }
       return;
     }
@@ -1264,8 +1265,10 @@ export class Game {
     const mesh = makeHuman(role, seed);
     const angle = seed * Math.PI * 2 + index * 2.15;
     const offset = new THREE.Vector3(Math.cos(angle) * 0.52, 0, Math.sin(angle) * 0.52);
+    const lineage = tribe ? (this.societies.get(tile.islandId)?.culture.lineage ?? this.simulation.snapshot.culture.lineage) : this.simulation.snapshot.culture.lineage;
     const person: Person = {
       id: `resident-${this.personSerial++}`,
+      name: generatePersonName(lineage, seed + this.personSerial * 0.0031),
       mesh,
       q: tile.q,
       r: tile.r,
@@ -2861,7 +2864,7 @@ export class Game {
         this.assignHomes();
         this.assignJobs();
         this.migrationResolved = true;
-        this.setHint("A migrant joins the settlement.");
+        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A migrant"} joins the settlement.`);
       }
     }
 
@@ -3507,7 +3510,7 @@ export class Game {
     resident.mesh.position.copy(this.tileTop(home).add(resident.offset));
     this.assignHomes();
     this.assignJobs();
-    this.setHint(`${originId === "player" ? "A villager" : "A migrant"} resettled in ${destinationId === "player" ? "your civilization" : this.societies.get(destinationId)?.name ?? "a neighboring region"}.`);
+    this.setHint(`${resident.name} resettled in ${destinationId === "player" ? "the village" : this.societies.get(destinationId)?.name ?? "a neighboring region"}.`);
     return true;
   }
 
@@ -3541,6 +3544,7 @@ export class Game {
         }
       }
     }
+    const deceasedNames = toRemove.map(i => this.people[i]?.name).filter(Boolean);
     for (let i = toRemove.length - 1; i >= 0; i--) {
       const person = this.people[toRemove[i]];
       this.checkKnowledgeLoss(person);
@@ -3550,7 +3554,7 @@ export class Game {
     if (toRemove.length > 0) {
       this.assignHomes();
       this.assignJobs();
-      this.setHint(`${toRemove.length === 1 ? "An elder" : "Elders"} passed away this year.`);
+      this.setHint(deceasedNames.length === 1 ? `${deceasedNames[0]} passed away.` : `${deceasedNames[0]} and ${deceasedNames.length - 1} other${deceasedNames.length > 2 ? "s" : ""} passed away this year.`);
     }
   }
 
@@ -3762,7 +3766,7 @@ export class Game {
       if (hut) {
         this.spawnOne(hut, "villager", 0, false, true);
         this.assignHomes();
-        this.setHint("A child of the village came of age.");
+        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A child"} came of age in the village.`);
         return;
       }
     }
@@ -3787,20 +3791,20 @@ export class Game {
 
   private tryHunger(): void {
     if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.48) {
-      const gone = this.exileHungry(false);
-      if (gone) this.setHint("Disease, hunger, or insecurity drove a villager to leave.");
+      const exiled = this.exileHungry(false);
+      if (exiled) this.setHint(`${exiled} left the village, driven by hardship.`);
       return;
     }
     for (const society of this.societies.values()) {
       const tribe = this.people.filter((person) => person.tribe && person.islandId === society.islandId);
       if (tribe.length <= 1 || society.food >= 0.5) continue;
-      const gone = this.exileHungry(true, society.islandId);
-      if (gone) this.setHint(`${society.name} lost a villager to hunger.`);
+      const exiled = this.exileHungry(true, society.islandId);
+      if (exiled) this.setHint(`${exiled} of ${society.name} was lost to hunger.`);
       return;
     }
   }
 
-  private exileHungry(tribe: boolean, islandId?: string): boolean {
+  private exileHungry(tribe: boolean, islandId?: string): string | null {
     const preferred = !tribe ? this.householdMetrics?.vulnerableResidentId : null;
     const person =
       (preferred ? this.people.find((entry) => entry.id === preferred && entry.tribe === tribe) : undefined) ??
@@ -3811,12 +3815,13 @@ export class Game {
           (islandId ? entry.islandId === islandId : true),
       ) ??
       this.people.find((entry) => entry.tribe === tribe && (islandId ? entry.islandId === islandId : true));
-    if (!person) return false;
+    if (!person) return null;
+    const name = person.name;
     this.checkKnowledgeLoss(person);
     this.peopleGroup.remove(person.mesh);
     this.people.splice(this.people.indexOf(person), 1);
     this.assignJobs();
-    return true;
+    return name;
   }
 
   private applySeason(season: Season): void {
