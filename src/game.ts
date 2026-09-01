@@ -456,6 +456,7 @@ export class Game {
       if (keepIslands.has(tile.islandId)) continue;
       if (hexDistance(tile.q - fq, tile.r - fr) <= UNLOAD_RADIUS) continue;
       this.tileGroup.remove(tile.mesh);
+      tile.topMat.dispose();
       this.tiles.delete(key);
     }
     const isLive = (obj: THREE.Object3D) => obj.parent !== null;
