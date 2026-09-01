@@ -61,6 +61,7 @@ import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { generatePersonName } from "./simulation/culture.ts";
+import { shouldBirth, shouldExileHungry, computeDeaths } from "./population.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
 import { HouseholdSystem, inheritBehavioralStrategy, initialBehavioralStrategy, type HouseholdMetrics } from "./simulation/households.ts";
@@ -3551,37 +3552,20 @@ export class Game {
   }
 
   private advanceAges(year: number): void {
-    const regionPop = new Map<string, number>();
-    for (const person of this.people) {
-      const key = person.tribe ? person.islandId : "player";
-      regionPop.set(key, (regionPop.get(key) ?? 0) + 1);
-    }
-    const toRemove: number[] = [];
-    for (let i = 0; i < this.people.length; i++) {
-      const person = this.people[i];
-      person.age += 1;
-      if (person.age >= 78) {
-        const regionKey = person.tribe ? person.islandId : "player";
-        if ((regionPop.get(regionKey) ?? 0) <= 6) continue;
-        const mortalityChance = 0.15 + (person.age - 78) * 0.08;
-        if (hash2(person.seed + year * 0.0037, year) < mortalityChance) {
-          toRemove.push(i);
-          regionPop.set(regionKey, (regionPop.get(regionKey) ?? 1) - 1);
-        }
-      }
-    }
-    const deceasedNames = toRemove.map(i => this.people[i]?.name).filter(Boolean);
-    for (let i = toRemove.length - 1; i >= 0; i--) {
-      const person = this.people[toRemove[i]];
+    for (const person of this.people) person.age += 1;
+    const deaths = computeDeaths(this.people, year, hash2);
+    for (let i = deaths.length - 1; i >= 0; i--) {
+      const person = this.people[deaths[i]!.personIndex];
       this.checkKnowledgeLoss(person);
       this.removeFromRegionIndex(person);
       this.peopleGroup.remove(person.mesh);
-      this.people.splice(toRemove[i], 1);
+      this.people.splice(deaths[i]!.personIndex, 1);
     }
-    if (toRemove.length > 0) {
+    if (deaths.length > 0) {
       this.assignHomes();
       this.assignJobs();
-      this.setHint(deceasedNames.length === 1 ? `${deceasedNames[0]} passed away.` : `${deceasedNames[0]} and ${deceasedNames.length - 1} other${deceasedNames.length > 2 ? "s" : ""} passed away this year.`);
+      const names = deaths.map(d => d.name);
+      this.setHint(names.length === 1 ? `${names[0]} passed away.` : `${names[0]} and ${names.length - 1} other${names.length > 2 ? "s" : ""} passed away this year.`);
     }
   }
 
@@ -3785,51 +3769,56 @@ export class Game {
   }
 
   private tryBirths(): void {
-    const folk = this.citizens();
-    const housing = this.housingOf("player");
-    if (this.simulation.snapshot.birthReadiness > 0.34 && (this.householdMetrics?.birthReadiness ?? 0.5) > 0.42 && folk.length < housing && this.food > 4) {
-      const hut = [...this.tiles.values()].find(
-        (tile) => tile.building === "hut" && tile.owner === "player" && tile.buildLeft <= 0,
-      );
-      if (hut) {
-        this.spawnOne(hut, "villager", 0, false, true);
-        this.assignHomes();
-        this.setHint(`${this.people[this.people.length - 1]?.name ?? "A child"} came of age in the village.`);
-        return;
-      }
-    }
-    for (const society of this.societies.values()) {
-      const tribe = this.regionPeople(society.islandId);
-      const homes = this.housingOf("tribe", society.islandId);
-      if (society.food <= tribe.length * 1.7 || tribe.length >= homes || society.food <= 4) continue;
-      const hut = [...this.tiles.values()].find(
-        (tile) =>
-          tile.building === "hut" &&
-          tile.owner === "tribe" &&
-          tile.islandId === society.islandId &&
-          tile.buildLeft <= 0,
-      );
-      if (!hut) continue;
-      this.spawnOne(hut, "villager", 0, true, true);
-      this.assignHomes();
-      this.setHint(`${society.name} welcomed a new villager.`);
-      return;
-    }
+    const societies = new Map(
+      [...this.societies.values()].map(s => [s.islandId, {
+        islandId: s.islandId, name: s.name, food: s.food,
+        populationCount: this.regionPeople(s.islandId).length,
+        housing: this.housingOf("tribe", s.islandId),
+      }]),
+    );
+    const candidate = shouldBirth({
+      playerCitizenCount: this.citizens().length,
+      playerHousing: this.housingOf("player"),
+      food: this.food,
+      birthReadiness: this.simulation.snapshot.birthReadiness,
+      mortalityRisk: this.simulation.snapshot.mortalityRisk,
+      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
+      societies,
+    });
+    if (!candidate) return;
+    const owner = candidate.tribe ? "tribe" : "player";
+    const hut = [...this.tiles.values()].find(
+      (tile) => tile.building === "hut" && tile.owner === owner && tile.buildLeft <= 0 &&
+        (!candidate.tribe || tile.islandId === candidate.islandId),
+    );
+    if (!hut) return;
+    this.spawnOne(hut, candidate.role, 0, candidate.tribe, true);
+    this.assignHomes();
+    const name = this.people[this.people.length - 1]?.name ?? "A child";
+    this.setHint(candidate.tribe ? `${candidate.societyName} welcomed a new villager.` : `${name} came of age in the village.`);
   }
 
   private tryHunger(): void {
-    if (this.citizens().length > 1 && this.simulation.snapshot.mortalityRisk > 0.48) {
-      const exiled = this.exileHungry(false);
-      if (exiled) this.setHint(`${exiled} left the village, driven by hardship.`);
-      return;
-    }
-    for (const society of this.societies.values()) {
-      const tribe = this.regionPeople(society.islandId);
-      if (tribe.length <= 1 || society.food >= 0.5) continue;
-      const exiled = this.exileHungry(true, society.islandId);
-      if (exiled) this.setHint(`${exiled} of ${society.name} was lost to hunger.`);
-      return;
-    }
+    const societies = new Map(
+      [...this.societies.values()].map(s => [s.islandId, {
+        islandId: s.islandId, name: s.name, food: s.food,
+        populationCount: this.regionPeople(s.islandId).length,
+        housing: this.housingOf("tribe", s.islandId),
+      }]),
+    );
+    const exile = shouldExileHungry({
+      playerCitizenCount: this.citizens().length,
+      playerHousing: this.housingOf("player"),
+      food: this.food,
+      birthReadiness: this.simulation.snapshot.birthReadiness,
+      mortalityRisk: this.simulation.snapshot.mortalityRisk,
+      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
+      societies,
+    });
+    if (!exile) return;
+    const name = this.exileHungry(exile.tribe, exile.islandId);
+    if (!name) return;
+    this.setHint(exile.tribe ? `${name} of ${exile.societyName} was lost to hunger.` : `${name} left the village, driven by hardship.`);
   }
 
   private exileHungry(tribe: boolean, islandId?: string): string | null {
