@@ -97,7 +97,6 @@ export function createCosmicSystem(): CosmicSystem {
       child.position.set(sun.position.x + Math.cos(angle) * orbit.distance, 0, sun.position.z + Math.sin(angle) * orbit.distance);
       child.rotation.y = time * 0.08;
     }
-    planet.visible = zoom < 1450;
     stars.visible = zoom > 900;
   } };
 }
