@@ -50,8 +50,22 @@ export class Hud {
   private readonly outlook = document.querySelector<HTMLElement>("#system-outlook");
   private readonly cause = document.querySelector<HTMLElement>("#system-cause");
 
+  private readonly banner = document.querySelector<HTMLElement>("#event-banner");
+  private bannerTimeout = 0;
+
   setHint(text: string): void {
     if (this.hint) this.hint.textContent = text;
+  }
+
+  showBanner(text: string, category: string): void {
+    if (!this.banner) return;
+    this.banner.textContent = text;
+    this.banner.className = `hud event-banner event-${category}`;
+    this.banner.style.display = "block";
+    window.clearTimeout(this.bannerTimeout);
+    this.bannerTimeout = window.setTimeout(() => {
+      this.banner!.style.display = "none";
+    }, 4500);
   }
 
   refresh(state: CivHudState): void {

@@ -211,6 +211,26 @@ body,
   50% { filter: brightness(1.35); }
 }
 
+.event-banner {
+  left: 50%;
+  top: 72px;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font: 700 14px/1.3 "Iowan Old Style", Palatino, serif;
+  text-align: center;
+  max-width: min(600px, 70vw);
+  pointer-events: none;
+  animation: banner-in 400ms ease;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.event-crisis { background: rgba(180, 40, 30, 0.75); color: #ffe4e0; backdrop-filter: blur(10px); }
+.event-warning { background: rgba(180, 120, 30, 0.75); color: #fff4d5; backdrop-filter: blur(10px); }
+.event-wonder { background: rgba(40, 100, 160, 0.75); color: #d8f0ff; backdrop-filter: blur(10px); }
+.event-triumph { background: rgba(40, 140, 90, 0.75); color: #d5ffe8; backdrop-filter: blur(10px); }
+@keyframes banner-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
 .hud-hint {
   left: 50%;
   bottom: 128px;

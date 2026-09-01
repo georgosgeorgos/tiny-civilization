@@ -208,6 +208,7 @@ export class Game {
   private readonly fallenLineages = new Map<string, CulturalState>();
   private readonly renewalUntil = new Map<string, number>();
   private societyLensIndex = 0;
+  private prevCrisisState = { pandemic: false, war: false, catastrophe: false, alien: false, collapse: false };
   private growTimer = 0;
   private hungerTimer = 0;
   private seeded = false;
@@ -2059,6 +2060,7 @@ export class Game {
     this.assignHomes();
     this.assignJobs();
     this.setHint(`${society.name} collapses; its abandoned works become a memory for a future settlement.`);
+    this.hud.showBanner(`${society.name} has fallen`, "crisis");
   }
 
   private seedAnimals(): void {
@@ -3004,6 +3006,7 @@ export class Game {
     if (snapshot.originCrisis && snapshot.originCrisis.outcome !== this.lastOriginCrisis) {
       this.lastOriginCrisis = snapshot.originCrisis.outcome;
       this.setHint(`Year ${snapshot.originCrisis.year}: ${this.originProfile.title} faces ${snapshot.originCrisis.outcome}. Its institutions and knowledge path will now remember this fork.`);
+      this.hud.showBanner(`The ${this.originProfile.title.toLowerCase()} faces its first crisis: ${snapshot.originCrisis.outcome}`, "warning");
     }
     const alien = snapshot.alienContact;
     if (alien && alien.phase !== this.lastAlienPhase) {
@@ -4067,6 +4070,22 @@ export class Game {
     if (activeAlien) crisisFlags.push("Signal");
     if (simulation.diseaseOutbreak) crisisFlags.push("Epidemic");
     const skyWithFlags = crisisFlags.length > 0 ? `${sky} · ${crisisFlags.join(" · ")}` : sky;
+    const now = { pandemic: !!activePandemic, war: activeWar, catastrophe: !!activeCatastrophe, alien: !!activeAlien, collapse: false };
+    if (now.pandemic && !this.prevCrisisState.pandemic) {
+      this.hud.showBanner("A plague spreads through the settlement", "crisis");
+    } else if (now.war && !this.prevCrisisState.war) {
+      this.hud.showBanner("War has broken out", "crisis");
+    } else if (now.catastrophe && !this.prevCrisisState.catastrophe && this.catastrophe) {
+      const label = this.catastrophe.kind === "earthquake" ? "An earthquake" : this.catastrophe.kind === "eruption" ? "A volcanic eruption" : this.catastrophe.kind === "meteorite" ? "A meteorite strike" : this.catastrophe.kind === "tsunami" ? "A tsunami" : "A locust swarm";
+      this.hud.showBanner(`${label} strikes the region`, "crisis");
+    } else if (now.alien && !this.prevCrisisState.alien) {
+      this.hud.showBanner("An anomalous signal has been detected", "wonder");
+    } else if (!now.pandemic && this.prevCrisisState.pandemic) {
+      this.hud.showBanner("The plague has passed", "triumph");
+    } else if (!now.war && this.prevCrisisState.war) {
+      this.hud.showBanner("Peace has returned", "triumph");
+    }
+    this.prevCrisisState = now;
     const { outlook, cause } = this.computeOutlook(simulation, localFoodNeed, currentRegime, regimeNote, activeCatastrophe, activePandemic, activeWar, activeAlien);
     this.hud.refresh({
       year: yearFromDays(this.simDays), season: this.season, era: eraName(snap.people, snap.buildingTotal),
