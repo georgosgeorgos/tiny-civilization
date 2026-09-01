@@ -4146,11 +4146,11 @@ export class Game {
 
   private updateScaleOfWorld(time: number): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
-    if (!this.spacecraftMode && this.observatoryView === "world" && !this.observerMove?.observatoryView && distance <= 10.5) {
+    if (!this.spacecraftMode && this.observatoryView === "world" && !this.observerMove?.observatoryView && distance <= 5) {
       this.setObservatoryView("subatomic");
       return;
     }
-    if (this.observatoryView === "subatomic" && distance > 175) {
+    if (this.observatoryView === "subatomic" && distance > 20) {
       this.observatoryView = "world";
       this.cosmicMode = false;
       this.camera.near = 0.4;
