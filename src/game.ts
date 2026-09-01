@@ -456,8 +456,14 @@ export class Game {
       if (keepIslands.has(tile.islandId)) continue;
       if (hexDistance(tile.q - fq, tile.r - fr) <= UNLOAD_RADIUS) continue;
       this.tileGroup.remove(tile.mesh);
+      tile.topMat.dispose();
       this.tiles.delete(key);
     }
+    const isLive = (obj: THREE.Object3D) => obj.parent !== null;
+    this.swaying.splice(0, this.swaying.length, ...this.swaying.filter(isLive));
+    this.smokeStacks.splice(0, this.smokeStacks.length, ...this.smokeStacks.filter(isLive));
+    this.shrineOrbs.splice(0, this.shrineOrbs.length, ...this.shrineOrbs.filter(isLive));
+    this.nightLights.splice(0, this.nightLights.length, ...this.nightLights.filter(isLive));
   }
 
   private stampTile(q: number, r: number, sample: NonNullable<ReturnType<typeof sampleWorld>>): void {
@@ -1034,13 +1040,17 @@ export class Game {
   }
 
   private frameObserver(target: THREE.Vector3, distance: number): void {
-    this.observerMove = null;
     const direction = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
     if (direction.lengthSq() < 0.001) direction.set(0.45, 0.7, 0.55);
     direction.normalize();
-    this.controls.target.copy(target);
-    this.camera.position.copy(target).addScaledVector(direction, distance);
-    this.controls.update();
+    const toPosition = target.clone().addScaledVector(direction, distance);
+    this.observerMove = {
+      fromTarget: this.controls.target.clone(),
+      toTarget: target,
+      fromPosition: this.camera.position.clone(),
+      toPosition,
+      progress: 0,
+    };
   }
 
   private tileTop(tile: Tile): THREE.Vector3 {
@@ -1502,21 +1512,32 @@ export class Game {
   private setZoom(distance: number): void {
     const wasSpecialView = this.observatoryView !== "world";
     this.observatoryView = "world";
+    this.cosmicMode = false;
+    this.camera.near = 0.4;
+    this.camera.far = 9000;
+    this.camera.updateProjectionMatrix();
+    this.restoreWorldVisibility();
     this.refreshViewReadout();
+    const fromTarget = wasSpecialView ? new THREE.Vector3(0, 1.2, 0) : this.controls.target.clone();
+    const fromPosition = wasSpecialView ? new THREE.Vector3(38, 58, 72) : this.camera.position.clone();
     if (wasSpecialView) {
-      this.controls.target.set(0, 1.2, 0);
-      this.camera.position.set(38, 58, 72);
+      this.controls.target.copy(fromTarget);
+      this.camera.position.copy(fromPosition);
     }
-    const direction = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+    const direction = new THREE.Vector3().subVectors(fromPosition, fromTarget);
     if (direction.lengthSq() < 0.001) direction.set(0.4, 0.72, 0.55);
     direction.normalize();
-    this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
-    this.controls.update();
+    this.observerMove = {
+      fromTarget,
+      toTarget: fromTarget.clone(),
+      fromPosition,
+      toPosition: fromTarget.clone().addScaledVector(direction, distance),
+      progress: 0,
+    };
     this.setHint(distance < 120 ? "Local view. Observe the council's work close up." : distance < 900 ? "World view. Survey the societies." : "Space view. Observe the worlds beyond Tidelight.");
   }
 
   private recenterObserver(): void {
-    this.observerMove = null;
     if (this.observatoryView === "universe") {
       this.transitionToObservatoryView("universe", new THREE.Vector3(-300, 0, -100), new THREE.Vector3(-145, 390, 1220));
     } else if (this.observatoryView === "subatomic") {
@@ -4146,11 +4167,11 @@ export class Game {
 
   private updateScaleOfWorld(time: number): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
-    if (!this.spacecraftMode && this.observatoryView === "world" && !this.observerMove?.observatoryView && distance <= 10.5) {
+    if (!this.spacecraftMode && this.observatoryView === "world" && !this.observerMove?.observatoryView && distance <= 5) {
       this.setObservatoryView("subatomic");
       return;
     }
-    if (this.observatoryView === "subatomic" && distance > 175) {
+    if (this.observatoryView === "subatomic" && distance > 20) {
       this.observatoryView = "world";
       this.cosmicMode = false;
       this.camera.near = 0.4;
