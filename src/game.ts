@@ -141,7 +141,7 @@ export class Game {
   private readonly communicationGroup = new THREE.Group();
   private readonly communicationLinks = new Map<string, CommunicationLink>();
   private readonly regionalRelations = new Map<string, RegionalRelation>();
-  private readonly activityLog: string[] = [];
+  private readonly activityLog: { message: string; kind: import("./simulation/manifest.ts").ChronicleEventKind; year: number; season: string }[] = [];
   private readonly water: WaterSystem;
   private readonly clouds: THREE.Group;
   private readonly cosmos: CosmicSystem;
@@ -4090,14 +4090,20 @@ export class Game {
 
   private setHint(text: string): void {
     this.hud.setHint(text);
-    if (this.activityLog[0] === text) return;
-    this.activityLog.unshift(text);
+    if (this.activityLog.length > 0 && this.activityLog[0]!.message === text) return;
+    const kind = classifyChronicleEvent(text);
+    const year = yearFromDays(this.simDays);
+    this.activityLog.unshift({ message: text, kind, year, season: this.season });
     this.activityLog.splice(8);
     const feed = document.querySelector("#activity-feed");
-    if (feed) feed.innerHTML = this.activityLog.map((entry) => `<li>${entry}</li>`).join("");
+    if (feed) {
+      feed.innerHTML = this.activityLog
+        .map((entry) => `<li class="feed-${entry.kind}"><span class="feed-time">Y${entry.year}</span> ${entry.message}</li>`)
+        .join("");
+    }
     this.chronicle.record(
       this.simDays,
-      classifyChronicleEvent(text),
+      kind,
       text,
       ["player", ...this.societies.keys()],
       { population: this.citizens().length, food: this.food, gold: this.gold, knowledge: this.technology, towns: this.societies.size },

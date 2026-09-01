@@ -248,6 +248,18 @@ body,
 .observer p { margin: 8px 0 0; color: #9eb0ac; }
 .activity-feed { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; max-height: 180px; overflow-y: auto; }
 .activity-feed li { border-left: 2px solid rgba(124, 224, 194, .65); padding-left: 7px; }
+.feed-time { color: #8a9e96; font-size: 9px; font-weight: 700; letter-spacing: .04em; margin-right: 4px; }
+.feed-construction { border-left-color: var(--wood); }
+.feed-trade { border-left-color: var(--gold); }
+.feed-culture { border-left-color: #c4b4e8; }
+.feed-collapse { border-left-color: #ff9c8d; }
+.feed-weather { border-left-color: #8ec8e8; }
+.feed-discovery { border-left-color: #ade8a4; }
+.feed-founding { border-left-color: var(--accent); }
+.feed-milestone { border-left-color: var(--gold); }
+.feed-migration { border-left-color: #e8b896; }
+.feed-directive { border-left-color: var(--muted); }
+.feed-renewal { border-left-color: #a8e6a3; }
 
 .tools {
   display: grid;
