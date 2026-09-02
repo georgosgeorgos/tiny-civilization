@@ -1,5 +1,6 @@
 import { SeededRandom } from "./random.ts";
-import type { CulturalState, CultureTraits } from "./types.ts";
+import { mutatePractice } from "./culture.ts";
+import type { CulturalState, CultureTraits, GenerativePractice } from "./types.ts";
 
 export type SocietyVitality = {
   population: number;
@@ -38,12 +39,22 @@ export function forkCulture(parent: CulturalState, seed: number, purpose: "diasp
     nextTraits[trait] = clamp(nextTraits[trait] + (random.next() - 0.5) * 0.11 + pressure);
   }
   const syllable = ["a", "e", "i", "o", "u", "r", "s", "v"][Math.floor(random.next() * 8)] ?? "r";
-  const practice = purpose === "renewal" ? "ruin-keepers' memory" : "diaspora charter";
+  const mutatedPractices = parent.practices.map(p => mutatePractice(p, random, 0));
+  const originPractice: GenerativePractice = {
+    id: `p-${purpose}-${seed}`,
+    effects: purpose === "renewal"
+      ? { soil: 0.005, forest: 0.005, food: 0, water: 0, knowledge: 0.015, stability: 0.01 }
+      : { soil: 0, forest: 0, food: 0.008, water: 0.005, knowledge: 0.008, stability: 0.005 },
+    name: purpose === "renewal" ? "ruin-keepers' memory" : "diaspora charter",
+    parentId: null,
+    discoveredDay: 0,
+  };
+  const allPractices = [...mutatedPractices, originPractice].slice(-6);
   return {
     lineage: `${parent.lineage}-${syllable.toUpperCase()}${parent.generation + 1}`,
     generation: parent.generation + 1,
     traits: nextTraits,
-    practices: [...new Set([...parent.practices, practice])].sort().slice(-6),
+    practices: allPractices,
     novelty: parent.novelty + 0.06,
     language: {
       ...parent.language,

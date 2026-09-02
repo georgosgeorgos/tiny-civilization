@@ -26,7 +26,7 @@ export function evolveInstitutions(current: InstitutionState, context: { inputs:
   const forms = new Set<InstitutionKind>();
   const foodWorks = inputs.buildings.farm + inputs.buildings.fishery + inputs.buildings.orchard;
   const civicWorks = inputs.buildings.market + inputs.buildings.shrine + inputs.buildings.forge;
-  const practices = new Set(culture.practices);
+  const practiceNames = new Set(culture.practices.map(p => p.name));
   const origin = inputs.origin ?? "camp";
   if (culture.traits.cooperation > 0.5 && civicWorks >= 1) forms.add("council");
   if (culture.traits.cooperation + culture.traits.stewardship > 1.1 && foodWorks >= 2) forms.add("commons");
@@ -38,10 +38,10 @@ export function evolveInstitutions(current: InstitutionState, context: { inputs:
   if (origin === "city" && inputs.buildings.market + inputs.buildings.forge >= 2) forms.add("faction");
   if (origin === "spacecraft" && inputs.buildings.mine + inputs.buildings.forge >= 1) forms.add("maintenance");
   if (origin === "spacecraft" && (health < 0.65 || inputs.disruption !== "none")) forms.add("sections");
-  if (practices.has("civic reform")) forms.add("council");
-  if (practices.has("fortified quarters")) forms.add("watch");
-  if (practices.has("soil covenant")) forms.add("commons");
-  if (practices.has("redundant loop")) forms.add("maintenance");
+  if (practiceNames.has("civic reform")) forms.add("council");
+  if (practiceNames.has("fortified quarters")) forms.add("watch");
+  if (practiceNames.has("soil covenant")) forms.add("commons");
+  if (practiceNames.has("redundant loop")) forms.add("maintenance");
   const span = Math.max(0, Math.min(12, years));
   const foodSecurity = clamp(stores.food / Math.max(2, inputs.population * 2.5));
   const fit = clamp((foodSecurity + health + stability + forms.size * 0.08) / 1.32);

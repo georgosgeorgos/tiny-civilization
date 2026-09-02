@@ -132,6 +132,69 @@ function summarize(year: number, samples: MetricSample[]): SweepSummary {
   return { year, n, mean, min, max, std };
 }
 
+export type OEEMetrics = {
+  discoveryRate: number[];
+  cumulativeDiscoveries: number[];
+  practiceVectorDiversity: number[];
+  traitEntropy: number[];
+  activeSpeciesCount: number[];
+};
+
+export function computeOEEMetrics(checkpoints: ExperimentCheckpoint[]): OEEMetrics {
+  const discoveryRate: number[] = [];
+  const cumulativeDiscoveries: number[] = [];
+  const practiceVectorDiversity: number[] = [];
+  const traitEntropy: number[] = [];
+  const activeSpeciesCount: number[] = [];
+  const allSeenIds = new Set<string>();
+
+  for (let i = 0; i < checkpoints.length; i++) {
+    const snap = checkpoints[i].snapshot;
+    const practices = snap.culture.practices;
+
+    for (const p of practices) allSeenIds.add(p.id);
+    cumulativeDiscoveries.push(allSeenIds.size);
+    activeSpeciesCount.push(practices.length);
+
+    if (i > 0) {
+      const prevIds = new Set(checkpoints[i - 1].snapshot.culture.practices.map(p => p.id));
+      const newCount = practices.filter(p => !prevIds.has(p.id)).length;
+      discoveryRate.push(newCount);
+    } else {
+      discoveryRate.push(practices.length);
+    }
+
+    const effectKeys: (keyof import("./types.ts").PracticeEffects)[] = ["soil", "forest", "food", "water", "knowledge", "stability"];
+    if (practices.length >= 2) {
+      let totalDist = 0;
+      let pairs = 0;
+      for (let a = 0; a < practices.length; a++) {
+        for (let b = a + 1; b < practices.length; b++) {
+          let dist = 0;
+          for (const k of effectKeys) dist += (practices[a].effects[k] - practices[b].effects[k]) ** 2;
+          totalDist += Math.sqrt(dist);
+          pairs++;
+        }
+      }
+      practiceVectorDiversity.push(pairs > 0 ? totalDist / pairs : 0);
+    } else {
+      practiceVectorDiversity.push(0);
+    }
+
+    const traits = snap.culture.traits;
+    const traitVals = [traits.cooperation, traits.curiosity, traits.mobility, traits.stewardship, traits.resilience];
+    const sum = traitVals.reduce((s, v) => s + v, 0);
+    let entropy = 0;
+    for (const v of traitVals) {
+      const p = v / sum;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+    traitEntropy.push(entropy);
+  }
+
+  return { discoveryRate, cumulativeDiscoveries, practiceVectorDiversity, traitEntropy, activeSpeciesCount };
+}
+
 export function runSweep(config: SweepConfig): SweepSummary[] {
   const interval = Math.max(1, Math.floor(config.checkpointEvery ?? 10));
   const years = Math.max(0, Math.floor(config.years));
