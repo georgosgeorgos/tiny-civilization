@@ -46,7 +46,7 @@ if (branchPoint) {
     console.log(`  Health:     ${(baseEnd.snapshot.health * 100).toFixed(1)}% vs ${(branchEnd.snapshot.health * 100).toFixed(1)}%`);
     console.log(`  Stability:  ${(baseEnd.snapshot.stability * 100).toFixed(1)}% vs ${(branchEnd.snapshot.stability * 100).toFixed(1)}%`);
     console.log(`  Era:        ${baseEnd.snapshot.era} vs ${branchEnd.snapshot.era}`);
-    console.log(`  Practices:  [${baseEnd.snapshot.culture.practices.join(", ")}] vs [${branchEnd.snapshot.culture.practices.join(", ")}]`);
+    console.log(`  Practices:  [${baseEnd.snapshot.culture.practices.map(p => p.name).join(", ")}] vs [${branchEnd.snapshot.culture.practices.map(p => p.name).join(", ")}]`);
     console.log(`  Techniques: ${baseEnd.snapshot.innovations.techniques.length} vs ${branchEnd.snapshot.innovations.techniques.length}`);
   }
 }

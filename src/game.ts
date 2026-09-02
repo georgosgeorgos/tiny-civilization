@@ -2322,7 +2322,7 @@ export class Game {
       }
     }
     if (traits.resilience > 0.6 && channelSupportsContact(left.diplomacy)) {
-      const watch = left.era !== "Camp" && (left.culture.traits.resilience > 0.62 || left.culture.practices.includes("fortified quarters"));
+      const watch = left.era !== "Camp" && (left.culture.traits.resilience > 0.62 || left.culture.practices.some(p => p.name.includes("fortified")));
       if (watch && left.gold >= 8 && !left.diplomacy.messages.some((m) => m.kind === "defense-pact")) {
         left.gold -= 8;
         left.diplomacy = dispatchMessage(left.diplomacy, "defense-pact", year, dispatchContext);
@@ -2499,11 +2499,18 @@ export class Game {
   }
 
   private resolveWarOutcome(war: WarState, aggSociety: Society | null, defSociety: Society | null): void {
-    const addPractice = (society: Society | null, practice: string) => {
+    const addPractice = (society: Society | null, practiceName: string) => {
+      const gp: import("./simulation/types.ts").GenerativePractice = {
+        id: `p-war-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        effects: { soil: 0, forest: 0, food: 0, water: 0, knowledge: 0.01, stability: 0.015 },
+        name: practiceName,
+        parentId: null,
+        discoveredDay: this.simDays,
+      };
       if (!society) {
-        if (!this.simulation.snapshot.culture.practices.includes(practice)) (this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot).culture.practices.push(practice);
-      } else if (!society.culture.practices.includes(practice)) {
-        society.culture.practices.push(practice);
+        if (!this.simulation.snapshot.culture.practices.some(p => p.name === practiceName)) (this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot).culture.practices.push(gp);
+      } else if (!society.culture.practices.some(p => p.name === practiceName)) {
+        society.culture.practices.push(gp);
       }
     };
     if (war.outcome === "victory") {
@@ -4134,7 +4141,7 @@ export class Game {
       capacity: simulation.populationCapacity,
       health: Math.round(simulation.health * 100),
       land: this.spacecraftMode ? Math.round(this.hullIntegrity) : Math.round(((simulation.ecology.soil + simulation.ecology.forest + simulation.ecology.fish) / 3) * 100),
-      culture: `${simulation.culture.language.dialect} · ${simulation.culture.practices[0] ?? "unsettled custom"} · BCD ${(simulation.bioculturalDiversity * 100).toFixed(0)}%`,
+      culture: `${simulation.culture.language.dialect} · ${simulation.culture.practices[0]?.name ?? "unsettled custom"} · BCD ${(simulation.bioculturalDiversity * 100).toFixed(0)}%`,
       outlook,
       cause,
       scenario: this.spacecraftMode ? "spacecraft" : "planet",

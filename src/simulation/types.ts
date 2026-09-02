@@ -31,12 +31,29 @@ export type LanguageState = {
   /** Higher values preserve local identity and reduce unmediated borrowing. */
   boundary: number;
 };
+export type PracticeEffects = {
+  soil: number;
+  forest: number;
+  food: number;
+  water: number;
+  knowledge: number;
+  stability: number;
+};
+
+export type GenerativePractice = {
+  id: string;
+  effects: PracticeEffects;
+  name: string;
+  parentId: string | null;
+  discoveredDay: number;
+};
+
 export type CulturalState = {
   lineage: string;
   generation: number;
   traits: CultureTraits;
-  /** Practices are discovered from lived conditions and are retained as cultural memory. */
-  practices: string[];
+  /** Practices are generative effect vectors discovered from lived conditions. */
+  practices: GenerativePractice[];
   novelty: number;
   language: LanguageState;
 };
@@ -124,6 +141,10 @@ export type SimulationInputs = {
   demographics?: Demographics;
   /** When provided from per-person cultural weights, overrides engine trait evolution. */
   aggregateTraits?: CultureTraits;
+  /** When false, cultural practices do not modify ecological recovery (ablation switch). */
+  cultureToEcology?: boolean;
+  /** When false, ecological conditions do not gate practice discovery (ablation switch). */
+  ecologyToCulture?: boolean;
 };
 
 export type RegionSimulationInput = {

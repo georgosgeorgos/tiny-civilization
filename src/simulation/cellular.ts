@@ -1,7 +1,7 @@
 import type { BuildingId } from "../buildings.ts";
 import { SeededRandom } from "./random.ts";
 import type { ClimateForcing } from "./climate.ts";
-import type { CultureTraits, SimulationInputs } from "./types.ts";
+import type { CultureTraits, GenerativePractice, SimulationInputs } from "./types.ts";
 
 const LAND_USE: Record<BuildingId, number> = {
   hut: 1, farm: 2, orchard: 3, lumber: 4, fishery: 5, mine: 6, market: 7, shrine: 8, forge: 9,
@@ -67,7 +67,7 @@ export class CellularEcology {
     }
   }
 
-  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing, diseaseImport = 0, practices: string[] = []): CellularMetrics {
+  advance(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], days: number, culture?: CultureTraits, climate?: ClimateForcing, diseaseImport = 0, practices: GenerativePractice[] = [], cultureToEcology = true): CellularMetrics {
     // Long-horizon simulation converges in bounded batches rather than replaying every day.
     const iterations = Math.max(1, Math.min(240, Math.ceil(days * 2)));
     const dt = Math.min(0.5, days / iterations);
@@ -101,12 +101,20 @@ export class CellularEcology {
     const drought = Math.max(disruption === "drought" ? 0.68 : 0, climate?.drought ?? 0);
     const flood = Math.max(disruption === "flood" ? 0.6 : 0, climate?.floodRisk ?? 0);
 
-    const practiceSet = new Set(practices);
-    const pSoil = (practiceSet.has("soil-rest covenant") ? 0.032 : 0) + (practiceSet.has("living commons") ? 0.018 : 0) + (practiceSet.has("soil-restoration") ? 0.022 : 0);
-    const pForest = (practiceSet.has("living commons") ? 0.014 : 0) + (practiceSet.has("forestry-management") ? 0.028 : 0);
-    const pFish = practiceSet.has("wayfinding compact") ? 0.012 : 0;
-    const pWater = practiceSet.has("storm ledger") ? 0.012 : 0;
-    const pDisease = (practiceSet.has("common granary") ? -0.015 : 0) + (practiceSet.has("open archive") ? -0.008 : 0) + (practiceSet.has("plague-memory") ? -0.025 : 0);
+    let pSoil = 0;
+    let pForest = 0;
+    let pFish = 0;
+    let pWater = 0;
+    let pDisease = 0;
+    if (cultureToEcology) {
+      for (const practice of practices) {
+        pSoil += practice.effects.soil;
+        pForest += practice.effects.forest;
+        pFish += practice.effects.water * 0.4;
+        pWater += practice.effects.water;
+        pDisease -= (practice.effects.food + practice.effects.stability) * 0.2;
+      }
+    }
 
     for (let step = 0; step < iterations; step += 1) {
       for (let i = 0; i < length; i += 1) {

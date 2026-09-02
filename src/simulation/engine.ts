@@ -20,6 +20,7 @@ export class SimulationEngine {
   private readonly climate: ClimateSystem;
   private state: SimulationSnapshot;
   private lastPandemicYear = -100;
+  private lastCultureToEcology = true;
 
   constructor(seed: number, stores: Stores, knowledge = 0) {
     this.random = new SeededRandom(seed);
@@ -161,6 +162,7 @@ export class SimulationEngine {
 
   private step(inputs: SimulationInputs, stepDays: number): void {
     const yearPart = stepDays / DAYS_PER_YEAR;
+    this.lastCultureToEcology = inputs.cultureToEcology !== false;
     this.reconcilePopulation(inputs.population, inputs.demographics);
     const climate = this.climate.advance(stepDays);
     const foodNeed = inputs.population * 1.5 * yearPart;
@@ -232,7 +234,7 @@ export class SimulationEngine {
 
   private updateEcology(buildings: Record<BuildingId, number>, disruption: SimulationInputs["disruption"], stepDays: number, climate = this.state.climate, diseaseImport = 0): void {
     const ecology: Ecology = this.state.ecology;
-    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate, diseaseImport, this.state.culture.practices);
+    const cellular = this.cells.advance(buildings, disruption, stepDays, this.state.culture.traits, climate, diseaseImport, this.state.culture.practices, this.lastCultureToEcology);
     ecology.soil = cellular.soil;
     ecology.forest = cellular.forest;
     ecology.fish = cellular.fish;
@@ -343,7 +345,17 @@ export class SimulationEngine {
     else outcome = this.state.health < 0.68 || this.state.stores.wood < inputs.population * 5 ? "emergency rationing" : "redundant loop";
     const crisis: OriginCrisis = { origin, outcome, year: Math.floor(this.state.elapsedDays / DAYS_PER_YEAR) };
     this.state.originCrisis = crisis;
-    this.state.culture = { ...this.state.culture, practices: [...new Set([...this.state.culture.practices, outcome])].sort() };
+    const crisisPractice: import("./types.ts").GenerativePractice = {
+      id: `p-crisis-${crisis.year}`,
+      effects: outcome === "soil covenant" ? { soil: 0.025, forest: 0.01, food: 0.01, water: 0, knowledge: 0.005, stability: 0.008 }
+        : outcome === "civic reform" ? { soil: 0, forest: 0, food: 0.005, water: 0, knowledge: 0.02, stability: 0.025 }
+        : outcome === "redundant loop" ? { soil: 0.005, forest: 0, food: 0.015, water: 0.005, knowledge: 0.02, stability: 0 }
+        : { soil: 0, forest: 0, food: 0.008, water: 0, knowledge: 0.008, stability: 0.01 },
+      name: outcome,
+      parentId: null,
+      discoveredDay: this.state.elapsedDays,
+    };
+    this.state.culture = { ...this.state.culture, practices: [...this.state.culture.practices, crisisPractice] };
     if (outcome === "civic reform" || outcome === "soil covenant" || outcome === "redundant loop") this.state.stability = clamp01(this.state.stability + 0.08);
     if (outcome === "fortified quarters" || outcome === "emergency rationing") this.state.stability = clamp01(this.state.stability - 0.06);
   }
@@ -360,10 +372,17 @@ export class SimulationEngine {
       if (this.state.ecology.disease < 0.3 && elapsed >= minDurationYears) {
         this.state.pandemic.resolved = true;
         this.lastPandemicYear = currentYear;
-        if (!this.state.culture.practices.includes("plague-memory")) {
+        if (!this.state.culture.practices.some(p => p.name.includes("plague"))) {
+          const plagueMemory: import("./types.ts").GenerativePractice = {
+            id: `p-plague-${currentYear}`,
+            effects: { soil: 0, forest: 0, food: 0.005, water: 0, knowledge: 0.01, stability: 0.012 },
+            name: "plague-memory rite",
+            parentId: null,
+            discoveredDay: this.state.elapsedDays,
+          };
           this.state.culture = {
             ...this.state.culture,
-            practices: [...this.state.culture.practices, "plague-memory"].sort(),
+            practices: [...this.state.culture.practices, plagueMemory],
           };
         }
       }
@@ -470,42 +489,63 @@ export class SimulationEngine {
       + (culture.language.dialect !== culture.language.family ? 0.2 : 0)
       + culture.language.lexicon.filter(w => w.includes("memory")).length * 0.05
     );
-    const practiceDiv = clamp01(culture.practices.length / 8);
+    let practiceDiv = clamp01(culture.practices.length / 8);
+    if (culture.practices.length >= 2) {
+      let totalDist = 0;
+      let pairs = 0;
+      const effectKeys: (keyof import("./types.ts").PracticeEffects)[] = ["soil", "forest", "food", "water", "knowledge", "stability"];
+      for (let i = 0; i < culture.practices.length; i++) {
+        for (let j = i + 1; j < culture.practices.length; j++) {
+          let dist = 0;
+          for (const k of effectKeys) dist += (culture.practices[i].effects[k] - culture.practices[j].effects[k]) ** 2;
+          totalDist += Math.sqrt(dist);
+          pairs++;
+        }
+      }
+      const meanDist = totalDist / pairs;
+      practiceDiv = clamp01(culture.practices.length / 8 + meanDist * 4);
+    }
     const ecologicalDiv = (ecology.soil + ecology.forest + ecology.fish + ecology.water) / 4;
     this.state.bioculturalDiversity = Math.cbrt(linguisticDiv * practiceDiv * ecologicalDiv);
   }
 
   private updatePracticeVulnerability(yearPart: number): void {
     const ecology = this.state.ecology;
-    const dependencies: Record<string, { field: keyof Ecology; threshold: number }> = {
-      "wayfinding compact": { field: "fish", threshold: 0.2 },
-      "soil-rest covenant": { field: "soil", threshold: 0.2 },
-      "living commons": { field: "forest", threshold: 0.2 },
-      "storm ledger": { field: "water", threshold: 0.2 },
-      "forestry-management": { field: "forest", threshold: 0.2 },
-    };
+    const effectToEco: Record<string, keyof Ecology> = { soil: "soil", forest: "forest", water: "water", food: "soil" };
     const vuln = this.state.practiceVulnerability;
-    for (const [practice, dep] of Object.entries(dependencies)) {
-      if (vuln[practice] !== undefined && vuln[practice] < 0) {
-        vuln[practice] += yearPart;
-        if (vuln[practice] >= 0) delete vuln[practice];
+
+    for (const practice of this.state.culture.practices) {
+      const pid = practice.id;
+      if (vuln[pid] !== undefined && vuln[pid] < 0) {
+        vuln[pid] += yearPart;
+        if (vuln[pid] >= 0) delete vuln[pid];
         continue;
       }
-      if (!this.state.culture.practices.includes(practice)) {
-        if (vuln[practice] !== undefined && vuln[practice] >= 0) delete vuln[practice];
-        continue;
+      let dominantField: keyof Ecology = "soil";
+      let dominantVal = -Infinity;
+      for (const key of Object.keys(effectToEco) as (keyof typeof effectToEco)[]) {
+        if (practice.effects[key as keyof import("./types.ts").PracticeEffects] > dominantVal) {
+          dominantVal = practice.effects[key as keyof import("./types.ts").PracticeEffects];
+          dominantField = effectToEco[key]!;
+        }
       }
-      if (ecology[dep.field] < dep.threshold) {
-        vuln[practice] = (vuln[practice] ?? 0) + yearPart;
-        if (vuln[practice] >= 5) {
+      if (ecology[dominantField] < 0.2) {
+        vuln[pid] = (vuln[pid] ?? 0) + yearPart;
+        if (vuln[pid] >= 5) {
           this.state.culture = {
             ...this.state.culture,
-            practices: this.state.culture.practices.filter(p => p !== practice),
+            practices: this.state.culture.practices.filter(p => p.id !== pid),
           };
-          vuln[practice] = -2;
+          vuln[pid] = -2;
         }
       } else {
-        if (vuln[practice] !== undefined && vuln[practice] >= 0) vuln[practice] = 0;
+        if (vuln[pid] !== undefined && vuln[pid] >= 0) vuln[pid] = 0;
+      }
+    }
+
+    for (const key of Object.keys(vuln)) {
+      if (vuln[key] >= 0 && !this.state.culture.practices.some(p => p.id === key)) {
+        delete vuln[key];
       }
     }
   }
@@ -538,7 +578,7 @@ export class SimulationEngine {
 
   private diseaseBurden(inputs: SimulationInputs, care: number): number {
     const density = inputs.population / Math.max(1, inputs.housing);
-    const plagueMemory = this.state.culture.practices.includes("plague-memory") ? 0.1 : 0;
+    const plagueMemory = this.state.culture.practices.some(p => p.name.includes("plague") || p.name.includes("memory")) ? 0.1 : 0;
     return clamp01((this.state.ecology.disease - 0.08) * 1.35 + Math.max(0, density - 0.72) * 0.32 - care - plagueMemory);
   }
 }

@@ -192,7 +192,7 @@ for (let year = 1; year <= 500; year++) {
     if (!pandemicTriggered) pandemicYear = year;
     pandemicTriggered = true;
   }
-  if (engine5.snapshot.culture.practices.includes("plague-memory")) {
+  if (engine5.snapshot.culture.practices.some(p => p.name.includes("plague"))) {
     plagueMemoryGained = true;
   }
   if (year === 100 || year === 250 || year === 500 || (pandemicYear > 0 && year === pandemicYear)) {
@@ -201,7 +201,7 @@ for (let year = 1; year <= 500; year++) {
   }
 }
 check("Pandemic triggers", pandemicTriggered, `triggered=${pandemicTriggered}, max disease seen in imports`);
-check("Plague-memory gained", plagueMemoryGained, `practices: ${engine5.snapshot.culture.practices.join(", ")}`);
+check("Plague-memory gained", plagueMemoryGained, `practices: ${engine5.snapshot.culture.practices.map(p => p.name).join(", ")}`);
 check("Society survives pandemic", engine5.snapshot.stores.food > 0, `food=${engine5.snapshot.stores.food.toFixed(1)}`);
 
 // ─── Summary ────────────────────────────────────────────────────────

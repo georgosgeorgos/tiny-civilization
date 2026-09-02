@@ -181,6 +181,7 @@ assert.ok(extraction.snapshot.settlementFootprint > 0, "cellular settlement pres
 assert.ok(extraction.snapshot.culture.generation >= 1, "societies should carry a cultural lineage across generations");
 assert.ok(Object.values(extraction.snapshot.culture.traits).every((value) => value >= 0 && value <= 1), "cultural traits should stay bounded under selection and mutation");
 assert.notEqual(extraction.snapshot.culture.language.dialect, "", "cultures should retain a named evolving dialect");
+assert.ok(extraction.snapshot.culture.practices.every(p => typeof p === "object" && p.effects && p.name), "practices should be GenerativePractice objects with effects and names");
 
 const isolated = new SimulationEngine(4, { food: 40, wood: 10, gold: 10 });
 const connected = new SimulationEngine(4, { food: 40, wood: 10, gold: 10 });
@@ -290,6 +291,20 @@ assert.deepEqual(branch, forkCulture(lineage, 901, "diaspora"), "cultural branch
 assert.notEqual(branch.lineage, lineage.lineage, "an offshoot should carry a distinct but related lineage");
 assert.ok(shouldSocietyFragment({ population: 8, capacity: 8, food: 22, mood: 64, migrationPressure: 0.2, culture: { ...lineage, traits: { ...lineage.traits, cooperation: 0.8, mobility: 0.8 } } }), "crowded and secure mobile societies should create offshoot pressure");
 assert.ok(shouldSocietyCollapse({ population: 1, capacity: 5, food: 0.1, mood: 20, migrationPressure: 0.9, culture: lineage }), "exhausted settlements should be able to collapse into renewal opportunities");
+
+const noveltyA = new SimulationEngine(100, { food: 40, wood: 20, gold: 20 });
+const noveltyB = new SimulationEngine(200, { food: 40, wood: 20, gold: 20 });
+const richInputs = { ...input, population: 10, housing: 14, buildings: { ...buildings, farm: 3, shrine: 1, market: 1 }, infrastructure: { roads: 2, ports: 1, tradeRoutes: 1 } };
+for (let year = 0; year < 200; year++) noveltyA.advanceYears({ ...richInputs, deltaDays: 12 }, 1);
+for (let year = 0; year < 200; year++) noveltyB.advanceYears({ ...richInputs, deltaDays: 12 }, 1);
+assert.ok(noveltyA.snapshot.culture.practices.length > 0, "societies should discover generative practices over time");
+assert.ok(noveltyB.snapshot.culture.practices.length > 0, "different seeds should also discover practices");
+if (noveltyA.snapshot.culture.practices.length > 0 && noveltyB.snapshot.culture.practices.length > 0) {
+  const aIds = new Set(noveltyA.snapshot.culture.practices.map(p => p.id));
+  const bIds = new Set(noveltyB.snapshot.culture.practices.map(p => p.id));
+  const overlap = [...aIds].filter(id => bIds.has(id)).length;
+  assert.equal(overlap, 0, "different seeds should produce novel practices with distinct IDs — the innovation space is open");
+}
 
 const regions = new SimulationClient(17, { food: 1, wood: 1, gold: 1 }, 0);
 const regionalSnapshots = regions.advanceRegions([
