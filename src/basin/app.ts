@@ -5,6 +5,7 @@ import "./style.css";
 
 const seasons = ["Spring", "Summer", "Autumn", "Winter"];
 const goods: Good[] = ["food", "timber", "tools"];
+const MAX_COUNTERFACTUAL_SEASONS = 1_600;
 const escape = (value: string): string => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const number = (value: number): string => Math.round(value).toLocaleString();
 const date = (season: number): string => `Year ${Math.floor(season / 4) + 1} · ${seasons[season % 4]}`;
@@ -150,6 +151,12 @@ export class BasinApp {
 
   private compare(): void {
     this.playing = false;
+    if (this.engine.state.season > MAX_COUNTERFACTUAL_SEASONS) {
+      this.baseline = null;
+      this.refresh();
+      this.notice("Counterfactual comparison is available through Year 400 to keep the page responsive.");
+      return;
+    }
     const baseline = new BasinEngine(this.engine.state.seed);
     baseline.advance(this.engine.state.season);
     const state = baseline.state;
