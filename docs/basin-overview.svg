@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Tiny Civilization river basin overview</title>
+  <desc id="desc">Three settlements share a river basin. Willowbank produces food, Pinewatch supplies timber, and Stoneford makes tools. Households trade along routes while drought, taxes, and bridges alter the system. The observatory shows maps, ledgers, trends, and causal events.</desc>
+  <defs>
+    <linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf0df"/>
+      <stop offset="1" stop-color="#cfdabd"/>
+    </linearGradient>
+    <linearGradient id="river" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6eb5cc"/>
+      <stop offset="1" stop-color="#367e9a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#284333" flood-opacity=".14"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b735f"/>
+    </marker>
+    <style>
+      .label { font: 600 17px system-ui, sans-serif; fill: #294235; }
+      .small { font: 13px system-ui, sans-serif; fill: #607064; }
+      .tiny { font: 600 11px system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; fill: #718071; }
+      .metric { font: 700 14px system-ui, sans-serif; fill: #3d5948; }
+      .node { fill: #fffdf5; stroke: #aebba6; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="640" rx="28" fill="#f8f7ef"/>
+  <rect x="28" y="28" width="760" height="584" rx="22" fill="url(#land)"/>
+
+  <text x="62" y="72" class="tiny">One landscape · three communities</text>
+  <text x="62" y="106" style="font: 32px Georgia, serif; fill:#243b30">A living river basin</text>
+
+  <path d="M418 34 C366 122 475 170 418 247 C363 320 454 371 404 443 C369 493 405 553 371 612" fill="none" stroke="#c9e3ea" stroke-width="34" stroke-linecap="round"/>
+  <path d="M418 34 C366 122 475 170 418 247 C363 320 454 371 404 443 C369 493 405 553 371 612" fill="none" stroke="url(#river)" stroke-width="19" stroke-linecap="round"/>
+
+  <path d="M191 250 C270 221 335 209 409 223" fill="none" stroke="#b18a5f" stroke-width="5" stroke-dasharray="12 8"/>
+  <path d="M442 232 C545 279 616 338 674 407" fill="none" stroke="#b18a5f" stroke-width="5" stroke-dasharray="12 8"/>
+  <path d="M206 278 C368 373 496 415 662 427" fill="none" stroke="#b18a5f" stroke-width="5" stroke-dasharray="12 8"/>
+
+  <g filter="url(#shadow)">
+    <rect class="node" x="78" y="188" width="206" height="126" rx="16"/>
+    <circle cx="108" cy="218" r="13" fill="#55765b"/>
+    <text x="132" y="224" class="label">Pinewatch</text>
+    <text x="101" y="254" class="small">Woodland community</text>
+    <text x="101" y="283" class="metric">Timber → trade &amp; works</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect class="node" x="454" y="112" width="218" height="126" rx="16"/>
+    <circle cx="484" cy="142" r="13" fill="#8d9c5c"/>
+    <text x="508" y="148" class="label">Willowbank</text>
+    <text x="477" y="178" class="small">Fertile floodplain</text>
+    <text x="477" y="207" class="metric">Food → households &amp; trade</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect class="node" x="570" y="398" width="204" height="126" rx="16"/>
+    <circle cx="600" cy="428" r="13" fill="#a57850"/>
+    <text x="624" y="434" class="label">Stoneford</text>
+    <text x="593" y="464" class="small">Upland workshops</text>
+    <text x="593" y="493" class="metric">Tools → productivity</text>
+  </g>
+
+  <g>
+    <rect x="61" y="472" width="255" height="106" rx="14" fill="#edf1e5" stroke="#b9c5b1"/>
+    <text x="82" y="501" class="tiny">Seasonal feedback</text>
+    <path d="M89 533 H286" stroke="#6b735f" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="84" y="558" class="small">land → work → stores → wellbeing</text>
+  </g>
+
+  <g>
+    <rect x="818" y="28" width="354" height="584" rx="22" fill="#fffdf7" stroke="#d9ddcf"/>
+    <text x="852" y="72" class="tiny">Observer controls</text>
+    <text x="852" y="106" style="font: 28px Georgia, serif; fill:#243b30">See cause and effect</text>
+
+    <g transform="translate(852 140)">
+      <circle cx="18" cy="18" r="18" fill="#dfe9d8"/><path d="M10 18h16M18 10v16" stroke="#496550" stroke-width="2"/>
+      <text x="54" y="15" class="label">Intervene</text>
+      <text x="54" y="37" class="small">Drought · tax · bridge</text>
+    </g>
+    <path d="M870 186 V216" stroke="#aebaa9" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(852 225)">
+      <circle cx="18" cy="18" r="18" fill="#e7e0cf"/><path d="M9 23l7-8 6 5 7-10" fill="none" stroke="#796544" stroke-width="2"/>
+      <text x="54" y="15" class="label">Advance seasons</text>
+      <text x="54" y="37" class="small">Every household is simulated</text>
+    </g>
+    <path d="M870 271 V301" stroke="#aebaa9" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(852 310)">
+      <circle cx="18" cy="18" r="18" fill="#dbe8ea"/><path d="M8 24c7-13 14 8 22-7" fill="none" stroke="#3d7788" stroke-width="2"/>
+      <text x="54" y="15" class="label">Read outcomes</text>
+      <text x="54" y="37" class="small">Map · ledger · trend · chronicle</text>
+    </g>
+    <path d="M870 356 V386" stroke="#aebaa9" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(852 395)">
+      <circle cx="18" cy="18" r="18" fill="#e8ded8"/><path d="M9 18h18M18 9v18" stroke="#845d4a" stroke-width="2" transform="rotate(45 18 18)"/>
+      <text x="54" y="15" class="label">Compare futures</text>
+      <text x="54" y="37" class="small">Same seed, no interventions</text>
+    </g>
+
+    <rect x="850" y="495" width="290" height="82" rx="13" fill="#eef1e7"/>
+    <text x="872" y="524" class="tiny">Reproducible by design</text>
+    <text x="872" y="550" class="small">Share a seed or save the entire basin.</text>
+  </g>
+</svg>
