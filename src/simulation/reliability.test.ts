@@ -27,6 +27,13 @@ test("long experiments replay independently of other experiments", () => {
   assert.deepEqual(runExperiment(plan), first);
 });
 
+test("experiment outcomes do not depend on checkpoint cadence", () => {
+  const plan = { manifest: createWorldManifest({ ...DEFAULT_CONFIG, seed: 143 }), stores, inputs, years: 20 };
+  const everyFive = runExperiment({ ...plan, checkpointEvery: 5 });
+  const everyTen = runExperiment({ ...plan, checkpointEvery: 10 });
+  assert.deepEqual(everyFive.checkpoints.at(-1)?.snapshot, everyTen.checkpoints.at(-1)?.snapshot);
+});
+
 test("JSON checkpoints continue exactly, including fractional days and ecological memory", () => {
   const original = new SimulationEngine(42, stores);
   original.advance({ ...inputs, deltaDays: 35.31 });
@@ -43,13 +50,35 @@ test("JSON checkpoints continue exactly, including fractional days and ecologica
   assert.deepEqual(restored.checkpoint, original.checkpoint);
 });
 
+test("lightweight snapshots are rejected for continuation", () => {
+  const source = new SimulationEngine(42, stores);
+  source.advance(inputs);
+  const restored = new SimulationEngine(42, stores);
+  assert.equal(source.snapshot.continuation, undefined);
+  assert.throws(() => restored.loadCheckpoint(structuredClone(source.snapshot)), /lightweight simulation snapshot/);
+});
+
 test("an unchanged experiment branch reproduces the original future", () => {
   const original = new SimulationEngine(100, stores);
-  original.advanceYears(inputs, 40);
+  for (let year = 0; year < 40; year += 1) original.advanceYears(inputs, 1);
   const checkpoint = { year: 40, snapshot: original.checkpoint };
-  original.advanceYears(inputs, 10);
+  for (let year = 0; year < 10; year += 1) original.advanceYears(inputs, 1);
   const branch = branchExperiment({ checkpoint, seed: 100, inputs, years: 10 });
   assert.deepEqual(branch.at(-1)?.snapshot, original.checkpoint);
+});
+
+test("macro projection depletes reserves proportionally and evaluates events at the projected year", () => {
+  const engine = new SimulationEngine(64, stores);
+  engine.advanceYears({ ...inputs, annualProduction: { food: 0, wood: 0, gold: 0 } }, 1);
+  assert.ok(engine.snapshot.stores.food > 0 && engine.snapshot.stores.food < stores.food, "a one-year deficit consumes part of an existing reserve");
+
+  const checkpoint = engine.checkpoint;
+  checkpoint.pandemic = { id: 1, virulence: 0.3, transmissibility: 0.3, originRegion: "local", startYear: 0, affectedRegions: ["local"], resolved: false };
+  const projected = new SimulationEngine(64, stores);
+  projected.loadCheckpoint(checkpoint);
+  projected.advanceYears(inputs, 3);
+  assert.equal(projected.snapshot.elapsedDays, 48);
+  assert.equal(projected.snapshot.pandemic?.resolved, true, "event duration is evaluated at the end of the projected interval");
 });
 
 test("macro projections advance climate in days and honor culture ablation", () => {

@@ -87,16 +87,15 @@ export class SimulationEngine {
   }
 
   loadCheckpoint(snapshot: SimulationSnapshot): void {
+    if (!snapshot.continuation) throw new Error("Cannot continue a lightweight simulation snapshot; use a portable checkpoint.");
     this.state = structuredClone(snapshot);
     delete this.state.continuation;
     this.climate.restore(snapshot.elapsedDays);
-    this.accumulator = snapshot.continuation?.accumulator ?? 0;
-    this.lastPandemicYear = snapshot.continuation?.lastPandemicYear ?? snapshot.pandemic?.startYear ?? -100;
-    this.lastCultureToEcology = snapshot.continuation?.cultureToEcology ?? true;
-    if (snapshot.continuation) {
-      this.random.restore(snapshot.continuation.randomState);
-      this.cells.restore(snapshot.continuation.cells);
-    }
+    this.accumulator = snapshot.continuation.accumulator;
+    this.lastPandemicYear = snapshot.continuation.lastPandemicYear;
+    this.lastCultureToEcology = snapshot.continuation.cultureToEcology;
+    this.random.restore(snapshot.continuation.randomState);
+    this.cells.restore(snapshot.continuation.cells);
   }
 
   advance(inputs: SimulationInputs): Readonly<SimulationSnapshot> {
@@ -140,9 +139,8 @@ export class SimulationEngine {
       wood: inputs.annualProduction.wood * innovationRules.extraction - maintenance,
       gold: inputs.annualProduction.gold * innovationRules.trade * innovationRules.extraction - maintenance * 0.35,
     };
-    const reserve = Math.max(8, inputs.population * (2.5 + infrastructure * 4));
     const storage = this.storageCapacity(inputs);
-    this.state.stores.food = annualFlow.food >= 0 ? Math.min(storage.food, reserve + annualFlow.food * Math.min(span, 12)) : 0;
+    this.state.stores.food = Math.max(0, Math.min(storage.food, this.state.stores.food + annualFlow.food * span));
     this.state.stores.wood = Math.max(0, Math.min(storage.wood, this.state.stores.wood + annualFlow.wood * span));
     this.state.stores.gold = Math.max(0, Math.min(storage.gold, this.state.stores.gold + annualFlow.gold * span));
     this.state.lastFlow = annualFlow;
@@ -176,9 +174,9 @@ export class SimulationEngine {
     this.updateInstitutions(inputs, span);
     this.updateInnovations(inputs);
     this.updateEvolution(inputs);
+    this.state.elapsedDays += span * DAYS_PER_YEAR;
     this.advancePandemic(inputs, span, institutionRules.healthProtection + innovationRules.healthProtection);
     this.advanceAlienContact(inputs, span);
-    this.state.elapsedDays += span * DAYS_PER_YEAR;
     this.resolveOriginCrisis(inputs);
     return this.state;
   }
