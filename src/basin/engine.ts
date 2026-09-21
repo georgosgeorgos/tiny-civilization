@@ -3,10 +3,14 @@ import { buildRoutes, generateBasin } from "./world.ts";
 import type { BasinEvent, BasinIntervention, BasinState, Good, Household, Livelihood, Settlement, Shipment, Stocks } from "./types.ts";
 
 const GOODS: Good[] = ["food", "timber", "tools"];
+const EVENT_KINDS = ["trade", "migration", "weather", "works", "policy", "livelihood"] as const;
 const zero = (): Stocks => ({ food: 0, timber: 0, tools: 0 });
 const clamp = (value: number, low: number, high: number): number => Math.max(low, Math.min(high, value));
 const round = (value: number): number => Math.round(value * 1000) / 1000;
 const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const isInteger = (value: unknown): value is number => Number.isSafeInteger(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const inRange = (value: unknown, low: number, high: number): value is number => isFiniteNumber(value) && value >= low && value <= high;
 const validStocks = (value: unknown): value is Stocks => {
   if (!value || typeof value !== "object") return false;
   const stocks = value as Partial<Stocks>;
@@ -16,34 +20,106 @@ const validGood = (value: unknown): value is Good => GOODS.includes(value as Goo
 const validLivelihood = (value: unknown): value is Livelihood => value === "farmer" || value === "woodcutter" || value === "toolmaker";
 
 function validateSave(value: unknown): asserts value is BasinState {
-  if (!value || typeof value !== "object") throw new Error("Invalid basin save: expected an object.");
+  if (!isRecord(value)) throw new Error("Invalid basin save: expected an object.");
   const state = value as Partial<BasinState>;
   if (state.schema !== "tiny-civilization.basin/v1") throw new Error("Invalid basin save: unsupported schema.");
-  if (!Number.isInteger(state.seed) || !Number.isInteger(state.season) || state.season! < 0) throw new Error("Invalid basin save: seed and season must be finite integers.");
+  if (!isInteger(state.seed) || state.seed < 0 || state.seed > 0xffffffff || !isInteger(state.season) || state.season < 0) throw new Error("Invalid basin save: seed or season is outside the supported range.");
   if (!state.world || state.world.seed !== state.seed || !Array.isArray(state.world.cells) || !Array.isArray(state.world.settlements)) throw new Error("Invalid basin save: world does not match its seed.");
-  if (!Number.isInteger(state.world.width) || !Number.isInteger(state.world.height) || state.world.width < 1 || state.world.height < 1 || state.world.cells.length !== state.world.width * state.world.height) throw new Error("Invalid basin save: malformed world grid.");
-  for (const cell of state.world.cells) {
-    if (!cell || !Number.isInteger(cell.id) || !isFiniteNumber(cell.x) || !isFiniteNumber(cell.z) || !isFiniteNumber(cell.elevation) || !isFiniteNumber(cell.moisture) || cell.moisture < 0 || cell.moisture > 1 || !isFiniteNumber(cell.fertility) || cell.fertility < 0 || cell.fertility > 1 || !isFiniteNumber(cell.forest) || cell.forest < 0 || cell.forest > 1) throw new Error("Invalid basin save: malformed world cell.");
-  }
+  if (!isInteger(state.world.width) || !isInteger(state.world.height) || state.world.width < 1 || state.world.height < 1 || state.world.cells.length !== state.world.width * state.world.height) throw new Error("Invalid basin save: malformed world grid.");
   if (!Array.isArray(state.settlements) || state.settlements.length !== 3 || !Array.isArray(state.households) || !Array.isArray(state.routes) || !Array.isArray(state.shipments)) throw new Error("Invalid basin save: missing simulation collections.");
-  if (!isFiniteNumber(state.droughtUntil) || state.droughtUntil < 0 || !isFiniteNumber(state.nextEventId) || !isFiniteNumber(state.nextShipmentId)) throw new Error("Invalid basin save: invalid counters.");
+  if (!Array.isArray(state.events) || !Array.isArray(state.history) || !Array.isArray(state.interventions)) throw new Error("Invalid basin save: malformed history.");
+  if (!isInteger(state.droughtUntil) || state.droughtUntil < 0 || state.droughtUntil > state.season + 24 || !isInteger(state.nextEventId) || state.nextEventId < 1 || !isInteger(state.nextShipmentId) || state.nextShipmentId < 1) throw new Error("Invalid basin save: invalid counters.");
+
+  if (state.world.settlements.length !== state.settlements.length || state.world.settlements.some((settlement) => !settlement || typeof settlement.id !== "string" || !settlement.id || typeof settlement.name !== "string" || !isInteger(settlement.x) || !isInteger(settlement.z) || settlement.x < 0 || settlement.x >= state.world!.width || settlement.z < 0 || settlement.z >= state.world!.height || !validLivelihood(settlement.specialty))) throw new Error("Invalid basin save: malformed world settlements.");
+  if (state.settlements.some((settlement) => !settlement || typeof settlement.id !== "string" || !settlement.id)) throw new Error("Invalid basin save: malformed settlements.");
   const settlementIds = new Set(state.settlements.map((settlement) => settlement.id));
   if (settlementIds.size !== state.settlements.length) throw new Error("Invalid basin save: duplicate settlement IDs.");
+  const worldSettlementIds = new Set(state.world.settlements.map((settlement) => settlement.id));
+  if (worldSettlementIds.size !== settlementIds.size || [...settlementIds].some((id) => !worldSettlementIds.has(id))) throw new Error("Invalid basin save: world and simulation settlements do not match.");
+
+  for (const [index, cell] of state.world.cells.entries()) {
+    const expectedX = index % state.world.width;
+    const expectedZ = Math.floor(index / state.world.width);
+    if (!cell || cell.id !== index || cell.x !== expectedX || cell.z !== expectedZ || !isFiniteNumber(cell.elevation) || !inRange(cell.moisture, 0, 1) || !inRange(cell.fertility, 0, 1) || !inRange(cell.forest, 0, 1) || typeof cell.river !== "boolean" || (cell.settlementId !== null && !settlementIds.has(cell.settlementId)) || (cell.downstream !== null && (!isInteger(cell.downstream) || cell.downstream < 0 || cell.downstream >= state.world.cells.length))) throw new Error("Invalid basin save: malformed world cell.");
+    if (cell.downstream !== null && state.world.cells[cell.downstream]!.elevation >= cell.elevation) throw new Error("Invalid basin save: drainage must descend.");
+  }
+
   for (const settlement of state.settlements) {
-    if (!settlement || typeof settlement.id !== "string" || !validLivelihood(settlement.specialty) || !validStocks(settlement.stocks) || !validStocks(settlement.prices) || !validStocks(settlement.production) || !validStocks(settlement.consumption) || !validStocks(settlement.imports) || !validStocks(settlement.exports) || !isFiniteNumber(settlement.treasury) || settlement.treasury < 0 || !isFiniteNumber(settlement.taxRate) || settlement.taxRate < 0 || settlement.taxRate > 0.5 || !isFiniteNumber(settlement.bridgeProgress) || settlement.bridgeProgress < 0 || settlement.bridgeProgress > 1) {
+    const worldSettlement = state.world.settlements.find((candidate) => candidate.id === settlement?.id);
+    if (!settlement || typeof settlement.id !== "string" || !settlement.id || typeof settlement.name !== "string" || !worldSettlement || settlement.name !== worldSettlement.name || settlement.x !== worldSettlement.x || settlement.z !== worldSettlement.z || !validLivelihood(settlement.specialty) || settlement.specialty !== worldSettlement.specialty || !validStocks(settlement.stocks) || !validStocks(settlement.prices) || !validStocks(settlement.production) || !validStocks(settlement.consumption) || !validStocks(settlement.imports) || !validStocks(settlement.exports) || !isFiniteNumber(settlement.treasury) || settlement.treasury < 0 || !inRange(settlement.taxRate, 0, 0.5) || typeof settlement.bridge !== "boolean" || !inRange(settlement.bridgeProgress, 0, 1) || (settlement.bridge && settlement.bridgeProgress !== 1) || !inRange(settlement.legitimacy, 0, 1) || !isInteger(settlement.population) || settlement.population < 0 || !isInteger(settlement.households) || settlement.households < 0 || !isInteger(settlement.migrants)) {
       throw new Error("Invalid basin save: malformed settlement.");
     }
   }
+
+  const householdIds = new Set<string>();
   for (const home of state.households) {
-    if (!home || typeof home.id !== "string" || !settlementIds.has(home.settlementId) || !validLivelihood(home.livelihood) || !validStocks(home.stocks) || !isFiniteNumber(home.coin) || home.coin < 0 || !isFiniteNumber(home.size) || home.size <= 0 || !isFiniteNumber(home.wellbeing) || !isFiniteNumber(home.hardship) || !isFiniteNumber(home.lastMoved)) throw new Error("Invalid basin save: malformed household.");
+    if (!home || typeof home.id !== "string" || !home.id || householdIds.has(home.id) || !settlementIds.has(home.settlementId) || !validLivelihood(home.livelihood) || !isInteger(home.parcelId) || home.parcelId < 0 || home.parcelId >= state.world.cells.length || !validStocks(home.stocks) || !isFiniteNumber(home.coin) || home.coin < 0 || !isInteger(home.size) || home.size <= 0 || !inRange(home.wellbeing, 0, 1) || !inRange(home.hardship, 0, 12) || !isInteger(home.lastMoved) || home.lastMoved > state.season) throw new Error("Invalid basin save: malformed household.");
+    householdIds.add(home.id);
   }
-  for (const shipment of state.shipments) {
-    if (!shipment || !settlementIds.has(shipment.from) || !settlementIds.has(shipment.to) || !validGood(shipment.good) || !isFiniteNumber(shipment.amount) || shipment.amount < 0 || !isFiniteNumber(shipment.arrival)) throw new Error("Invalid basin save: malformed shipment.");
+
+  for (const settlement of state.settlements) {
+    const homes = state.households.filter((home) => home.settlementId === settlement.id);
+    const population = homes.reduce((total, home) => total + home.size, 0);
+    if (settlement.households !== homes.length || settlement.population !== population) throw new Error("Invalid basin save: settlement totals do not match households.");
+    for (const good of GOODS) {
+      const stock = round(homes.reduce((total, home) => total + home.stocks[good], 0));
+      if (Math.abs(settlement.stocks[good] - stock) > 0.001) throw new Error("Invalid basin save: settlement stocks do not match households.");
+    }
   }
+
+  const routeIds = new Set<string>();
+  const routePairs = new Set<string>();
+  if (state.routes.length !== state.settlements.length * (state.settlements.length - 1) / 2) throw new Error("Invalid basin save: route network is incomplete.");
   for (const route of state.routes) {
-    if (!route || !settlementIds.has(route.from) || !settlementIds.has(route.to) || !Array.isArray(route.cells) || !isFiniteNumber(route.distance) || route.distance < 0 || !isFiniteNumber(route.travelSeasons) || route.travelSeasons < 1 || !isFiniteNumber(route.capacity) || route.capacity < 0 || !isFiniteNumber(route.traded) || route.traded < 0) throw new Error("Invalid basin save: malformed route.");
+    if (!route || typeof route.id !== "string" || !route.id || routeIds.has(route.id) || !settlementIds.has(route.from) || !settlementIds.has(route.to) || route.from === route.to || !Array.isArray(route.cells) || route.cells.length < 2 || route.cells.some((cell) => !isInteger(cell) || cell < 0 || cell >= state.world!.cells.length) || !isFiniteNumber(route.distance) || route.distance !== route.cells.length - 1 || !isInteger(route.travelSeasons) || route.travelSeasons < 1 || route.travelSeasons > 3 || !isFiniteNumber(route.capacity) || route.capacity < 0 || !isFiniteNumber(route.traded) || route.traded < 0 || route.traded > route.capacity || typeof route.bridge !== "boolean") throw new Error("Invalid basin save: malformed route.");
+    const from = state.settlements.find((settlement) => settlement.id === route.from)!;
+    const to = state.settlements.find((settlement) => settlement.id === route.to)!;
+    if (route.cells[0] !== from.z * state.world.width + from.x || route.cells.at(-1) !== to.z * state.world.width + to.x) throw new Error("Invalid basin save: route endpoints do not match settlements.");
+    if (route.cells.some((cell, index) => index > 0 && Math.abs(cell % state.world!.width - route.cells[index - 1]! % state.world!.width) + Math.abs(Math.floor(cell / state.world!.width) - Math.floor(route.cells[index - 1]! / state.world!.width)) !== 1)) throw new Error("Invalid basin save: route contains a disconnected path.");
+    const pair = [route.from, route.to].sort().join("|");
+    if (routePairs.has(pair)) throw new Error("Invalid basin save: duplicate route endpoints.");
+    routePairs.add(pair);
+    routeIds.add(route.id);
   }
-  if (!Array.isArray(state.events) || !Array.isArray(state.history) || !Array.isArray(state.interventions)) throw new Error("Invalid basin save: malformed history.");
+
+  const shipmentIds = new Set<number>();
+  for (const shipment of state.shipments) {
+    const route = state.routes.find((candidate) => candidate.id === shipment?.routeId);
+    if (!shipment || !isInteger(shipment.id) || shipment.id < 1 || shipmentIds.has(shipment.id) || !settlementIds.has(shipment.from) || !settlementIds.has(shipment.to) || shipment.from === shipment.to || typeof shipment.buyerId !== "string" || !householdIds.has(shipment.buyerId) || !validGood(shipment.good) || !isFiniteNumber(shipment.amount) || shipment.amount <= 0 || !isInteger(shipment.arrival) || shipment.arrival <= state.season || !route || !((route.from === shipment.from && route.to === shipment.to) || (route.to === shipment.from && route.from === shipment.to))) throw new Error("Invalid basin save: malformed shipment.");
+    shipmentIds.add(shipment.id);
+  }
+
+  const eventIds = new Set<number>();
+  if (state.events.length > 120) throw new Error("Invalid basin save: event history exceeds its retention limit.");
+  for (const event of state.events) {
+    if (!event || !isInteger(event.id) || event.id < 1 || eventIds.has(event.id) || !isInteger(event.season) || event.season < 0 || event.season > state.season || !EVENT_KINDS.includes(event.kind) || (event.settlementId !== null && !settlementIds.has(event.settlementId)) || typeof event.message !== "string" || !isRecord(event.causes) || Object.values(event.causes).some((cause) => !isFiniteNumber(cause))) throw new Error("Invalid basin save: malformed event.");
+    eventIds.add(event.id);
+  }
+
+  let previousSeason = Math.max(-1, state.season - state.history.length);
+  for (const entry of state.history) {
+    if (!entry || !isInteger(entry.season) || entry.season < 0 || entry.season > state.season || entry.season !== previousSeason + 1 || !isInteger(entry.population) || entry.population < 0 || !isFiniteNumber(entry.food) || entry.food < 0 || !isFiniteNumber(entry.trade) || entry.trade < 0 || !inRange(entry.wellbeing, 0, 1) || (entry.foodPrice !== undefined && (!isFiniteNumber(entry.foodPrice) || entry.foodPrice < 0)) || (entry.migration !== undefined && (!isInteger(entry.migration) || entry.migration < 0)) || (entry.forest !== undefined && !inRange(entry.forest, 0, 1))) throw new Error("Invalid basin save: malformed history entry.");
+    previousSeason = entry.season;
+  }
+  if (!state.history.length || state.history.length > 160 || state.history.at(-1)!.season !== state.season) throw new Error("Invalid basin save: incomplete history.");
+
+  if (state.interventions.length > 80) throw new Error("Invalid basin save: intervention history exceeds its retention limit.");
+  let previousInterventionSeason = -1;
+  for (const intervention of state.interventions) {
+    if (!intervention || !isInteger(intervention.season) || intervention.season < 0 || intervention.season > state.season || !isRecord(intervention.action)) throw new Error("Invalid basin save: malformed intervention.");
+    const action = intervention.action;
+    const valid = action.type === "drought" ? isInteger(action.duration) && action.duration >= 1 && action.duration <= 24
+      : action.type === "bridge" ? typeof action.settlementId === "string" && settlementIds.has(action.settlementId)
+      : action.type === "tax" ? typeof action.settlementId === "string" && settlementIds.has(action.settlementId) && inRange(action.rate, 0, 0.5)
+      : false;
+    if (!valid) throw new Error("Invalid basin save: malformed intervention.");
+    if (intervention.season < previousInterventionSeason) throw new Error("Invalid basin save: interventions are out of order.");
+    previousInterventionSeason = intervention.season;
+  }
+
+  const maxEventId = Math.max(0, ...eventIds);
+  const maxShipmentId = Math.max(0, ...shipmentIds);
+  if (state.nextEventId <= maxEventId || state.nextShipmentId <= maxShipmentId) throw new Error("Invalid basin save: counters do not follow existing IDs.");
 }
 
 /**
@@ -136,22 +212,26 @@ export class BasinEngine {
   }
 
   intervene(action: BasinIntervention): void {
+    let applied: BasinIntervention;
     if (action.type === "drought") {
       const duration = clamp(Math.floor(action.duration), 1, 24);
       this.simulation.droughtUntil = Math.max(this.simulation.droughtUntil, this.simulation.season + duration);
       this.event("weather", null, "Drought reduces water and harvests.", { duration });
+      applied = { type: "drought", duration };
     } else if (action.type === "tax") {
       const settlement = this.settlement(action.settlementId);
       if (!settlement) return;
       settlement.taxRate = round(clamp(action.rate, 0, 0.5));
       this.event("policy", settlement.id, "The market tax rate changed.", { rate: settlement.taxRate });
+      applied = { type: "tax", settlementId: settlement.id, rate: settlement.taxRate };
     } else {
       const settlement = this.settlement(action.settlementId);
       if (!settlement || settlement.bridge || settlement.bridgeProgress > 0) return;
       settlement.bridgeProgress = 0.001;
       this.event("works", settlement.id, "Council opened a bridge funding request.", { treasury: settlement.treasury });
+      applied = { type: "bridge", settlementId: settlement.id };
     }
-    this.simulation.interventions.push({ season: this.simulation.season, action: { ...action } });
+    this.simulation.interventions.push({ season: this.simulation.season, action: applied });
     if (this.simulation.interventions.length > 80) this.simulation.interventions.splice(0, this.simulation.interventions.length - 80);
   }
 
@@ -163,13 +243,6 @@ export class BasinEngine {
     validateSave(parsed);
     const engine = Object.create(BasinEngine.prototype) as BasinEngine;
     engine.simulation = parsed;
-    engine.simulation.events ??= [];
-    engine.simulation.history ??= [];
-    engine.simulation.shipments ??= [];
-    engine.simulation.interventions ??= [];
-    engine.simulation.nextEventId ??= engine.simulation.events.length + 1;
-    engine.simulation.nextShipmentId ??= engine.simulation.shipments.length + 1;
-    engine.refreshObservations();
     return engine;
   }
 
@@ -277,8 +350,8 @@ export class BasinEngine {
         // Ordinary works are intentionally material: they purchase household
         // output, then consume it maintaining paths and common structures.
         if (settlement.treasury >= 36) {
-          const timberSeller = this.bestSeller(settlement.id, "timber", 1.1);
-          const toolSeller = this.bestSeller(settlement.id, "tools", 0.3);
+          const timberSeller = this.bestSeller(settlement.id, "timber", 1.1, 1);
+          const toolSeller = this.bestSeller(settlement.id, "tools", 0.3, 0.2);
           if (timberSeller && toolSeller) {
             const cost = settlement.prices.timber + settlement.prices.tools * 0.2;
             timberSeller.stocks.timber = round(timberSeller.stocks.timber - 1);
@@ -293,8 +366,8 @@ export class BasinEngine {
       }
       const timberCost = 2.2;
       const toolCost = 0.45;
-      const timberSeller = this.bestSeller(settlement.id, "timber", 1.1);
-      const toolSeller = this.bestSeller(settlement.id, "tools", 0.3);
+      const timberSeller = this.bestSeller(settlement.id, "timber", 1.1, timberCost);
+      const toolSeller = this.bestSeller(settlement.id, "tools", 0.3, toolCost);
       if (!timberSeller || !toolSeller) continue;
       const cost = timberCost * settlement.prices.timber + toolCost * settlement.prices.tools;
       if (settlement.treasury + 0.0001 < cost) continue;
@@ -359,9 +432,9 @@ export class BasinEngine {
     const pending: Shipment[] = [];
     for (const shipment of this.simulation.shipments) {
       if (shipment.arrival > this.simulation.season) { pending.push(shipment); continue; }
-      const buyer = this.simulation.households.find((home) => home.id === shipment.buyerId && home.settlementId === shipment.to);
+      const buyer = this.simulation.households.find((home) => home.id === shipment.buyerId);
       if (buyer) buyer.stocks[shipment.good] = round(buyer.stocks[shipment.good] + shipment.amount);
-      this.event("trade", shipment.to, "Cargo arrived from a regional market.", { amount: shipment.amount, travel: this.simulation.season - shipment.arrival });
+      this.event("trade", buyer?.settlementId ?? shipment.to, buyer ? "Cargo reached its buyer after regional transit." : "Unclaimed cargo reached its destination market.", { amount: shipment.amount, travel: 0 });
     }
     this.simulation.shipments = pending;
   }
@@ -452,9 +525,9 @@ export class BasinEngine {
     const homes = this.homes(id);
     return homes.reduce((total, home) => total + home.stocks.food, 0) / Math.max(1, homes.reduce((total, home) => total + home.size, 0));
   }
-  private bestSeller(settlementId: string, good: Good, reserve: number): Household | undefined {
+  private bestSeller(settlementId: string, good: Good, reserve: number, purchase = 0): Household | undefined {
     return this.homes(settlementId)
-      .filter((home) => home.stocks[good] > reserve)
+      .filter((home) => home.stocks[good] + 0.0001 >= reserve + purchase)
       .sort((a, b) => b.stocks[good] - a.stocks[good] || a.id.localeCompare(b.id))[0];
   }
 }

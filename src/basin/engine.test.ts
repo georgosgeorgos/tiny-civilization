@@ -29,10 +29,25 @@ test("an exported simulation continues exactly after restoration", () => {
   original.intervene({ type: "drought", duration: 4 });
   original.advance(11);
   const restored = BasinEngine.restore(original.export());
+  assert.deepEqual(restored.state, original.state, "restoring a basin does not evolve or recompute saved state");
   original.advance(17);
   restored.advance(17);
   assert.deepEqual(restored.state, original.state);
   assert.throws(() => BasinEngine.restore('{"schema":"wrong"}'), /Invalid basin save/);
+});
+
+test("restore rejects malformed nested state and unsafe replay horizons", () => {
+  const exported = new BasinEngine(73).export();
+  const corrupted = (mutate: (state: BasinState) => void): string => {
+    const state = JSON.parse(exported) as BasinState;
+    mutate(state);
+    return JSON.stringify(state);
+  };
+  assert.throws(() => BasinEngine.restore(corrupted((state) => { state.history[0] = null as unknown as BasinState["history"][number]; })), /history entry/);
+  assert.throws(() => BasinEngine.restore(corrupted((state) => { state.events.push({ id: 1, season: 0, kind: "trade", settlementId: null, message: "broken", causes: null as unknown as Record<string, number> }); state.nextEventId = 2; })), /event/);
+  assert.throws(() => BasinEngine.restore(corrupted((state) => { state.routes[0]!.cells[0] = state.world.cells.length; })), /route/);
+  assert.throws(() => BasinEngine.restore(corrupted((state) => { state.households[0]!.parcelId = -1; })), /household/);
+  assert.throws(() => BasinEngine.restore(corrupted((state) => { state.season = Number.MAX_SAFE_INTEGER + 1; })), /seed or season/);
 });
 
 test("coins are conserved and outgoing cargo is represented in transit", () => {
@@ -71,6 +86,46 @@ test("a funded bridge consumes public funds and increases route capacity", () =>
   assert.equal(engine.state.settlements[0]!.bridge, true);
   assert.ok(engine.state.settlements[0]!.treasury < 200, "construction bought timber and tools from households");
   assert.ok(after.some((route, index) => route.capacity > (before[index] ?? 0)));
+});
+
+test("public works require enough material to preserve seller reserves", () => {
+  const engine = new BasinEngine(31);
+  const state = mutable(engine);
+  const settlement = state.settlements[0]!;
+  const homes = state.households.filter((home) => home.settlementId === settlement.id);
+  for (const home of homes) { home.stocks.timber = 0; home.stocks.tools = 0; }
+  const timberSeller = homes[0]!;
+  const toolSeller = homes[1]!;
+  timberSeller.stocks.timber = 3.299;
+  toolSeller.stocks.tools = 0.749;
+  settlement.treasury = 200;
+  settlement.bridgeProgress = 0.001;
+  (engine as unknown as { publicWorks(): void }).publicWorks();
+  assert.equal(settlement.bridgeProgress, 0.001, "construction waits when protected inventory is insufficient");
+  assert.equal(timberSeller.stocks.timber, 3.299);
+  assert.equal(toolSeller.stocks.tools, 0.749);
+
+  timberSeller.stocks.timber = 3.3;
+  toolSeller.stocks.tools = 0.75;
+  (engine as unknown as { publicWorks(): void }).publicWorks();
+  assert.ok(settlement.bridgeProgress > 0.001);
+  assert.equal(timberSeller.stocks.timber, 1.1);
+  assert.equal(toolSeller.stocks.tools, 0.3);
+});
+
+test("cargo follows a buyer that migrates before delivery", () => {
+  const engine = new BasinEngine(57);
+  const state = mutable(engine);
+  const route = state.routes[0]!;
+  const buyer = state.households.find((home) => home.settlementId === route.to)!;
+  const destination = state.settlements.find((settlement) => settlement.id !== route.to && settlement.id !== route.from)!;
+  const before = buyer.stocks.food;
+  buyer.settlementId = destination.id;
+  state.shipments.push({ id: state.nextShipmentId++, from: route.from, to: route.to, buyerId: buyer.id, good: "food", amount: 4, arrival: state.season });
+  (engine as unknown as { deliverShipments(): void }).deliverShipments();
+  assert.equal(buyer.stocks.food, before + 4);
+  assert.equal(state.shipments.length, 0);
+  assert.equal(state.events.at(-1)!.settlementId, destination.id);
 });
 
 test("tax policy changes treasury receipts and sustained hardship can move a whole household", () => {
