@@ -19,6 +19,15 @@ function finiteDuration(value: number, label: string): number {
   return value;
 }
 
+function advanceInAnnualSteps(engine: SimulationEngine, inputs: Omit<SimulationInputs, "deltaDays">, years: number): void {
+  let elapsed = 0;
+  while (elapsed < years) {
+    const span = Math.min(1, years - elapsed);
+    engine.advanceYears({ ...inputs, deltaDays: span * 12 }, span);
+    elapsed = Math.min(years, elapsed + span);
+  }
+}
+
 /**
  * Deterministic, render-free experiment runner. It advances the same engine
  * used by the browser in bounded macro steps, so scenario batches can be
@@ -35,7 +44,7 @@ export function runExperiment(plan: ExperimentPlan): ExperimentRecord {
   let elapsed = 0;
   while (elapsed < years) {
     const span = Math.min(interval, years - elapsed);
-    engine.advanceYears({ ...inputs, deltaDays: span * 12 }, span);
+    advanceInAnnualSteps(engine, inputs, span);
     elapsed += span;
     checkpoints.push({ year: elapsed, snapshot: engine.checkpoint });
   }
@@ -71,7 +80,7 @@ export function branchExperiment(plan: BranchPlan): ExperimentCheckpoint[] {
   let elapsed = 0;
   while (elapsed < years) {
     const span = Math.min(interval, years - elapsed);
-    engine.advanceYears({ ...inputs, deltaDays: span * 12 }, span);
+    advanceInAnnualSteps(engine, inputs, span);
     elapsed += span;
     checkpoints.push({ year: plan.checkpoint.year + elapsed, snapshot: engine.checkpoint });
   }
