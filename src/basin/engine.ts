@@ -425,7 +425,19 @@ export class BasinEngine {
     const food = homes.reduce((total, home) => total + home.stocks.food, 0) + this.simulation.shipments.filter((shipment) => shipment.good === "food").reduce((total, shipment) => total + shipment.amount, 0);
     const trade = this.simulation.routes.reduce((total, route) => total + route.traded, 0);
     const wellbeing = homes.length ? homes.reduce((total, home) => total + home.wellbeing, 0) / homes.length : 0;
-    this.simulation.history.push({ season: this.simulation.season, population, food: round(food), trade: round(trade), wellbeing: round(wellbeing) });
+    const foodPrice = this.simulation.settlements.reduce((total, settlement) => total + settlement.prices.food, 0) / Math.max(1, this.simulation.settlements.length);
+    const migration = this.simulation.settlements.reduce((total, settlement) => total + Math.max(0, settlement.migrants), 0);
+    const forest = this.simulation.world.cells.reduce((total, cell) => total + cell.forest, 0) / Math.max(1, this.simulation.world.cells.length);
+    this.simulation.history.push({
+      season: this.simulation.season,
+      population,
+      food: round(food),
+      trade: round(trade),
+      wellbeing: round(wellbeing),
+      foodPrice: round(foodPrice),
+      migration,
+      forest: round(forest),
+    });
     if (this.simulation.history.length > 160) this.simulation.history.splice(0, this.simulation.history.length - 160);
   }
 

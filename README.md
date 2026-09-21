@@ -18,8 +18,8 @@ land and policy. You shape conditions, then watch the consequences emerge.
   transactions and remain visible while in transit.
 - Councils that collect tax, purchase materials, maintain common works, and can
   build bridges that shorten journeys and increase route capacity.
-- A causal chronicle, settlement ledgers, map layers, and seasonal trends that
-  explain what changed and why.
+- A causal chronicle, settlement ledgers, map layers, and seasonal trends for
+  food, population, wellbeing, trade, migration, prices, and forest cover.
 - Counterfactual comparison against the same seed at the same season with no
   interventions.
 
@@ -48,7 +48,7 @@ http://localhost:5173/?seed=42
 | 3D map | River, settlements, routes, cargo, fertility, and forest cover | Orbit, zoom, recenter, and switch map layers |
 | Settlement ledger | Population, wellbeing, council trust, stores, flows, prices, and livelihoods | Select a settlement and change its sales tax |
 | Public works | Treasury, bridge status, route time, and carrying capacity | Commission a bridge |
-| Timeline | Current year, season, rainfall state, and food history | Pause, change pace, or advance one or ten years |
+| Timeline | Current year, season, rainfall state, food, population, wellbeing, trade, migration, prices, and forest history | Pause, change pace, choose a measure, or advance one or ten years |
 | Experiment controls | Current history versus an untouched run | Introduce a two-year drought or compare with no changes |
 | Chronicle | Trade, migration, work, weather, policy, and livelihood events | Expand **Why?** to inspect recorded causes |
 
@@ -146,6 +146,5 @@ models rather than calibrated historical or economic predictions.
 
 - Add browser-level interaction, accessibility, and responsive-layout tests.
 - Model upstream water use, shared reserves, route disruption, and agreements.
-- Extend trends to prices, migration, wellbeing, and land-cover change.
 - Add intervention-by-intervention counterfactual attribution.
 - Reduce the initial Three.js bundle if load performance becomes limiting.

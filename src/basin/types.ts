@@ -52,7 +52,16 @@ export type Route = { id: string; from: string; to: string; cells: number[]; dis
 export type Shipment = { id: number; from: string; to: string; buyerId: string; good: Good; amount: number; arrival: number; routeId: string };
 export type BasinEvent = { id: number; season: number; kind: "trade" | "migration" | "weather" | "works" | "policy" | "livelihood"; settlementId: string | null; message: string; causes: Record<string, number> };
 export type BasinIntervention = { type: "drought"; duration: number } | { type: "bridge"; settlementId: string } | { type: "tax"; settlementId: string; rate: number };
-export type BasinHistory = { season: number; population: number; food: number; trade: number; wellbeing: number };
+export type BasinHistory = {
+  season: number;
+  population: number;
+  food: number;
+  trade: number;
+  wellbeing: number;
+  foodPrice?: number;
+  migration?: number;
+  forest?: number;
+};
 export type BasinState = {
   schema: "tiny-civilization.basin/v1";
   seed: number;

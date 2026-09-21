@@ -1,6 +1,6 @@
 import { BasinEngine } from "./engine.ts";
 import { BasinView, type MapLayer } from "./view.ts";
-import type { BasinIntervention, BasinState, Good } from "./types.ts";
+import type { BasinHistory, BasinIntervention, BasinState, Good } from "./types.ts";
 import "./style.css";
 
 const seasons = ["Spring", "Summer", "Autumn", "Winter"];
@@ -8,6 +8,16 @@ const goods: Good[] = ["food", "timber", "tools"];
 const escape = (value: string): string => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const number = (value: number): string => Math.round(value).toLocaleString();
 const date = (season: number): string => `Year ${Math.floor(season / 4) + 1} · ${seasons[season % 4]}`;
+type TrendMetric = "food" | "population" | "wellbeing" | "trade" | "migration" | "foodPrice" | "forest";
+const trendMetrics: Record<TrendMetric, { label: string; value: (history: BasinHistory) => number | undefined; format: (value: number) => string; fixedDomain?: [number, number]; zeroBased?: boolean }> = {
+  food: { label: "Food reserves", value: (history) => history.food, format: number, zeroBased: true },
+  population: { label: "Population", value: (history) => history.population, format: number },
+  wellbeing: { label: "Wellbeing", value: (history) => history.wellbeing, format: (value) => `${Math.round(value * 100)}%`, fixedDomain: [0, 1] },
+  trade: { label: "Goods traded", value: (history) => history.trade, format: number, zeroBased: true },
+  migration: { label: "Households moved", value: (history) => history.migration, format: number, zeroBased: true },
+  foodPrice: { label: "Average food price", value: (history) => history.foodPrice, format: (value) => `${value.toFixed(2)} coin`, zeroBased: true },
+  forest: { label: "Forest cover", value: (history) => history.forest, format: (value) => `${Math.round(value * 100)}%`, fixedDomain: [0, 1] },
+};
 
 export class BasinApp {
   private engine: BasinEngine;
@@ -19,6 +29,7 @@ export class BasinApp {
   private lastTime = 0;
   private readonly root: HTMLElement;
   private frame = 0;
+  private trendMetric: TrendMetric = "food";
   private baseline: { season: number; population: number; food: number; trade: number; wellbeing: number } | null = null;
 
   constructor(root: HTMLElement, seed: number) {
@@ -62,7 +73,7 @@ export class BasinApp {
       <section class="basin-bottom">
         <div class="timeline"><button id="basin-play" class="primary">Pause</button><button id="advance-year">+1 year</button><button id="advance-decade">+10 years</button><label>Pace <select id="basin-pace"><option value="1">1 season / sec</option><option value="4">1 year / sec</option><option value="12">3 years / sec</option></select></label><span class="timeline-note">Every season is simulated.</span></div>
         <div class="experiment-controls"><span class="eyebrow">Change one condition</span><button id="basin-drought">Two-year drought</button><button id="basin-compare">Compare with no changes</button><p id="basin-comparison">Compare this history with the same seed and no interventions.</p></div>
-        <div class="history-grid"><section class="chronicle"><div class="section-line"><h3>What changed, and why</h3><span id="basin-seed"></span></div><ol id="basin-events"></ol></section><section class="basin-trends"><h3>Basin food reserves</h3><div id="basin-trend"></div><p class="quiet">Harvests, consumption, and cargo all affect reserves. Trade markers show goods that have left a household and are still travelling.</p></section></div>
+        <div class="history-grid"><section class="chronicle"><div class="section-line"><h3>What changed, and why</h3><span id="basin-seed"></span></div><ol id="basin-events"></ol></section><section class="basin-trends"><div class="section-line trend-heading"><h3>Basin history</h3><label>Measure <select id="basin-trend-metric"><option value="food">Food reserves</option><option value="population">Population</option><option value="wellbeing">Wellbeing</option><option value="trade">Goods traded</option><option value="migration">Households moved</option><option value="foodPrice">Average food price</option><option value="forest">Forest cover</option></select></label></div><div id="basin-trend" aria-live="polite"></div><p class="quiet">Follow material, social, and ecological change across the same seasonal timeline.</p></section></div>
         <p id="basin-notice" role="status" aria-live="polite"></p>
         <footer class="basin-footer">An experimental model of land, livelihoods, and exchange.<a href="?mode=legacy">Open the earlier sandbox</a></footer>
       </section>`;
@@ -75,6 +86,10 @@ export class BasinApp {
     this.el("#advance-year").addEventListener("click", () => this.advance(4));
     this.el("#advance-decade").addEventListener("click", () => this.advance(40));
     this.el<HTMLSelectElement>("#basin-pace").addEventListener("change", (event) => { this.pace = Number((event.target as HTMLSelectElement).value); });
+    this.el<HTMLSelectElement>("#basin-trend-metric").addEventListener("change", (event) => {
+      this.trendMetric = (event.target as HTMLSelectElement).value as TrendMetric;
+      this.drawTrend(this.engine.state);
+    });
     this.el<HTMLSelectElement>("#map-layer").addEventListener("change", (event) => this.view?.setLayer((event.target as HTMLSelectElement).value as MapLayer));
     this.el("#basin-recenter").addEventListener("click", () => this.view?.focus());
     this.el("#settlement-cards").addEventListener("click", (event) => {
@@ -179,9 +194,28 @@ export class BasinApp {
 
   private drawTrend(state: Readonly<BasinState>): void {
     const history = state.history.slice(-80);
-    const max = Math.max(1, ...history.map((h) => h.food));
-    const points = history.map((h, i) => `${12 + i / Math.max(1, history.length - 1) * 336},${94 - h.food / max * 78}`).join(" ");
-    this.el("#basin-trend").innerHTML = `<svg viewBox="0 0 360 116" role="img" aria-label="Food reserves over the last ${history.length} recorded seasons"><path d="M12 94H348" stroke="#d9dfcf" fill="none"/><polyline points="${points}" fill="none" stroke="#55765b" stroke-width="2.5"/><text x="12" y="112">${history.length ? escape(date(history[0].season)) : "Beginning"}</text><text x="348" y="112" text-anchor="end">${escape(date(state.season))}</text><text x="12" y="12">${number(max)} food</text></svg>`;
+    const metric = trendMetrics[this.trendMetric];
+    const observations = history
+      .map((entry) => ({ season: entry.season, value: metric.value(entry) }))
+      .filter((entry): entry is { season: number; value: number } => typeof entry.value === "number" && Number.isFinite(entry.value));
+    if (!observations.length) {
+      this.el("#basin-trend").innerHTML = `<p class="trend-empty">${escape(metric.label)} was not recorded in this older save. Advance one season to begin tracking it.</p>`;
+      return;
+    }
+    const values = observations.map((entry) => entry.value);
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const padding = Math.max(0.001, (rawMax - rawMin) * 0.12);
+    const min = metric.fixedDomain?.[0] ?? (metric.zeroBased ? 0 : rawMin - padding);
+    const max = metric.fixedDomain?.[1] ?? Math.max(min + 0.001, rawMax + padding);
+    const points = observations.map((entry, index) => {
+      const x = observations.length === 1 ? 180 : 12 + index / (observations.length - 1) * 336;
+      const y = 94 - (entry.value - min) / (max - min) * 78;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const latest = observations.at(-1)!;
+    const [latestX, latestY] = points.split(" ").at(-1)!.split(",");
+    this.el("#basin-trend").innerHTML = `<svg viewBox="0 0 360 116" role="img" aria-label="${escape(metric.label)} over ${observations.length} recorded seasons, currently ${escape(metric.format(latest.value))}"><path class="trend-axis" d="M12 94H348"/><polyline class="trend-line" points="${points}"/><circle class="trend-point" cx="${latestX}" cy="${latestY}" r="3.5"/><text x="12" y="12">${escape(metric.format(max))}</text><text x="12" y="91">${escape(metric.format(min))}</text><text x="12" y="112">${escape(date(observations[0].season))}</text><text x="348" y="112" text-anchor="end">${escape(date(latest.season))}</text></svg><p class="trend-reading"><strong>${escape(metric.label)}</strong><span>${escape(metric.format(latest.value))}</span></p>`;
   }
 
   private notice(message: string): void { this.el("#basin-notice").textContent = message; }

@@ -18,6 +18,10 @@ test("the same seed remains deterministic for 100 seasonal steps", () => {
   assert.ok(left.state.households.length >= 102 && left.state.households.length <= 108, "three settlements begin near 108 households");
   assert.ok(left.state.history.at(-1)!.wellbeing > 0.5, "the ordinary seasonal economy remains viable");
   assert.equal(left.state.history.length, 101, "history retains the initial observation and every season");
+  const latest = left.state.history.at(-1)!;
+  assert.ok(Number.isFinite(latest.foodPrice) && latest.foodPrice! > 0, "history records the basin food price");
+  assert.ok(Number.isInteger(latest.migration) && latest.migration! >= 0, "history records household moves");
+  assert.ok(Number.isFinite(latest.forest) && latest.forest! >= 0 && latest.forest! <= 1, "history records forest cover");
 });
 
 test("an exported simulation continues exactly after restoration", () => {
