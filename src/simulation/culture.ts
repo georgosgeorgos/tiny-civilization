@@ -50,7 +50,9 @@ export function generatePracticeName(effects: PracticeEffects, random: SeededRan
   return `${prefix} ${suffix}`;
 }
 
-let practiceSerial = 0;
+function practiceId(random: SeededRandom, elapsedDays: number): string {
+  return `p-${Math.floor(random.next() * 2 ** 32).toString(36)}-${Math.floor(random.next() * 2 ** 32).toString(36)}-${Math.floor(elapsedDays)}`;
+}
 
 function generatePractice(
   bias: Partial<PracticeEffects>,
@@ -65,7 +67,7 @@ function generatePractice(
     const traitInfluence = (traits.stewardship * 0.4 + traits.cooperation * 0.3 + traits.curiosity * 0.3) * 0.015;
     effects[key] = clampEffect(b + traitInfluence * (random.next() - 0.3) + (random.next() - 0.5) * 0.008);
   }
-  const id = `p-${++practiceSerial}-${Math.floor(elapsedDays)}`;
+  const id = practiceId(random, elapsedDays);
   const name = generatePracticeName(effects, random);
   return { id, effects, name, parentId, discoveredDay: elapsedDays };
 }
@@ -165,7 +167,7 @@ export function mutatePractice(parent: GenerativePractice, random: SeededRandom,
   for (const key of EFFECT_KEYS) {
     effects[key] = clampEffect(effects[key] + (random.next() - 0.5) * 0.01);
   }
-  const id = `p-${++practiceSerial}-${Math.floor(elapsedDays)}`;
+  const id = practiceId(random, elapsedDays);
   const name = generatePracticeName(effects, random);
   return { id, effects, name, parentId: parent.id, discoveredDay: elapsedDays };
 }

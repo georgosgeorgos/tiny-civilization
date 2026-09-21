@@ -25,7 +25,17 @@ const record = runExperiment({
 });
 
 console.log("=== Base experiment ===");
-console.log(serializeExperiment(record));
+const portableRecord = serializeExperiment(record);
+console.log(`World: ${record.manifest.id} (${record.manifest.modelVersion})`);
+console.log(`Portable record: ${record.checkpoints.length} checkpoints, ${(new TextEncoder().encode(portableRecord).byteLength / 1024).toFixed(1)} KiB JSON`);
+for (const checkpoint of record.checkpoints) {
+  const snapshot = checkpoint.snapshot;
+  console.log(
+    `  Year ${String(checkpoint.year).padStart(3)}: food ${snapshot.stores.food.toFixed(1)}, `
+    + `knowledge ${snapshot.knowledge.toFixed(1)}, health ${(snapshot.health * 100).toFixed(1)}%, `
+    + `era ${snapshot.era}, practices ${snapshot.culture.practices.length}, techniques ${snapshot.innovations.techniques.length}`,
+  );
+}
 
 const branchPoint = record.checkpoints.find(cp => cp.year === 50);
 if (branchPoint) {

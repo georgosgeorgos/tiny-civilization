@@ -4,6 +4,7 @@ import type { Capabilities, EvolutionEra } from "./evolution.ts";
 import type { ClimateForcing } from "./climate.ts";
 import type { InstitutionState } from "./institutions.ts";
 import type { InnovationState } from "./innovation.ts";
+import type { CellularCheckpoint } from "./cellular.ts";
 
 export type Stores = { food: number; wood: number; gold: number };
 
@@ -83,6 +84,14 @@ export type PandemicState = {
 };
 
 export type SimulationSnapshot = {
+  /** Present on portable checkpoints; omitted on lightweight live readings. */
+  continuation?: {
+    randomState: number;
+    cells: CellularCheckpoint;
+    accumulator: number;
+    lastPandemicYear: number;
+    cultureToEcology: boolean;
+  };
   elapsedDays: number;
   stores: Stores;
   ecology: Ecology;

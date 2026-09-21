@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types src/simulation/engine.test.ts",
+    "test": "node --experimental-strip-types --test src/simulation/*.test.ts src/basin/*.test.ts",
     "research": "node --experimental-strip-types src/simulation/research-runner.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "npm test && npm run build"
   },
   "dependencies": {
     "three": "^0.170.0"
@@ -17,5 +18,8 @@
     "@types/three": "^0.170.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
+  },
+  "engines": {
+    "node": ">=22.6.0"
   }
 }

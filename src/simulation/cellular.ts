@@ -21,6 +21,12 @@ export type CellularMetrics = {
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
+const CELL_FIELDS = ["soil", "forest", "fish", "water", "minerals", "disease", "settlement", "suitability", "landUse"] as const;
+export type CellularCheckpoint = {
+  fields: Record<(typeof CELL_FIELDS)[number], number[]>;
+  rebalanceDays: number;
+};
+
 /**
  * A small deterministic hex-like ecology. It gives the simulation local
  * feedback loops without requiring every rendered terrain tile in the worker.
@@ -41,6 +47,16 @@ export class CellularEcology {
    * but every work occupies one actual cell and competes for an eligible site. */
   private readonly landUse: Uint8Array;
   private rebalanceDays = 0;
+
+  get checkpoint(): CellularCheckpoint {
+    const fields = Object.fromEntries(CELL_FIELDS.map((field) => [field, Array.from(this[field])])) as CellularCheckpoint["fields"];
+    return { fields, rebalanceDays: this.rebalanceDays };
+  }
+
+  restore(checkpoint: CellularCheckpoint): void {
+    for (const field of CELL_FIELDS) this[field].set(checkpoint.fields[field]);
+    this.rebalanceDays = checkpoint.rebalanceDays;
+  }
 
   constructor(seed: number) {
     const length = this.size * this.size;

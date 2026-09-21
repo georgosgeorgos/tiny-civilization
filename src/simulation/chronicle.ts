@@ -25,6 +25,7 @@ export function classifyChronicleEvent(message: string): ChronicleEventKind {
  * capture is explicit so a long-running browser session stays lightweight.
  */
 export class EventChronicle {
+  private nextEventId = 1;
   private readonly events: ChronicleEvent[] = [];
   private readonly checkpoints: ExperimentCheckpoint[] = [];
 
@@ -32,7 +33,7 @@ export class EventChronicle {
     const previous = this.events.at(-1);
     if (previous?.message === message && Math.abs(previous.day - day) < 0.01) return;
     this.events.push({
-      id: this.events.length + 1,
+      id: this.nextEventId++,
       day: Number(day.toFixed(4)),
       year: Math.floor(day / 12) + 1,
       kind,
@@ -45,7 +46,10 @@ export class EventChronicle {
 
   checkpoint(year: number, snapshot: SimulationSnapshot): void {
     const previous = this.checkpoints.at(-1);
-    if (previous?.year === year) return;
+    if (previous?.year === year) {
+      previous.snapshot = structuredClone(snapshot);
+      return;
+    }
     this.checkpoints.push({ year, snapshot: structuredClone(snapshot) });
     if (this.checkpoints.length > 480) this.checkpoints.splice(0, this.checkpoints.length - 480);
   }

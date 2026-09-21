@@ -40,7 +40,7 @@ export function configFromSearch(search: string): SimulationConfig {
   const temperament = params.get("temperament");
   const goal = params.get("goal");
   const speedParam = params.get("speed");
-  const speed = speedParam === null ? Number.NaN : Number(speedParam);
+  const speed = !speedParam?.trim() ? Number.NaN : Number(speedParam);
   const technology = params.get("technology");
   const visualStyle = params.get("style");
   const origin = params.get("origin");
@@ -58,7 +58,7 @@ export function configFromSearch(search: string): SimulationConfig {
     archetype: archetype === "archipelago" || archetype === "shattered" || archetype === "frontier" ? archetype : "continental",
     // A new unaddressed visit gets a fresh geography; copying the generated
     // URL keeps that exact world replayable.
-    seed: params.has("seed") && Number.isFinite(Number(params.get("seed"))) ? Number(params.get("seed")) : freshSeed(),
+    seed: params.get("seed")?.trim() && Number.isSafeInteger(Number(params.get("seed"))) ? Number(params.get("seed")) >>> 0 : freshSeed(),
   };
 }
 
@@ -70,7 +70,7 @@ export function configFromPrompt(prompt: string, base: SimulationConfig): Simula
     ...base,
     resources: /hard|scarce|lean|survival/.test(text) ? "lean" : /rich|abundant|plenty|sandbox/.test(text) ? "abundant" : base.resources,
     temperament: /wild|chaos|volatile|storm/.test(text) ? "wild" : /calm|peaceful|slow/.test(text) ? "calm" : base.temperament,
-    technology: /advanced|industrial|modern|high.tech/.test(text) ? "advanced" : /developing|medieval|craft/.test(text) ? "developing" : base.technology,
+    technology: /advanced|industrial|modern|high.tech/.test(text) ? "advanced" : /developing|medieval|\bcraft\b/.test(text) ? "developing" : /primitive|stone.age/.test(text) ? "primitive" : base.technology,
     goal: /explore|frontier|island|discovery/.test(text) ? "explore" : /survive|survival|winter/.test(text) ? "survive" : /wealth|prosper|gold|trade/.test(text) ? "prosper" : base.goal,
     auto: true,
     visualStyle: /austere|muted|bleak|minimal/.test(text) ? "austere" : /radiant|neon|vivid|bright/.test(text) ? "radiant" : base.visualStyle,
@@ -80,14 +80,14 @@ export function configFromPrompt(prompt: string, base: SimulationConfig): Simula
         ? "city"
         : /farmer|agricultur|village|agrarian/.test(text)
           ? "farmers"
-          : base.origin,
+          : /\bcamp\b/.test(text) ? "camp" : base.origin,
     archetype: /continent|mainland|vast land/.test(text)
       ? "continental"
       : /shatter|fragment|broken sea|scattered/.test(text)
         ? "shattered"
         : /frontier|wilderness|untamed/.test(text)
           ? "frontier"
-          : base.archetype,
+          : /archipelago|islands?/.test(text) ? "archipelago" : base.archetype,
   };
 }
 

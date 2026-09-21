@@ -234,6 +234,7 @@ export class Game {
   private readonly chronicle: EventChronicle;
   private readonly directiveHistory: string[] = [];
   private lastSimulationInputs: SimulationInputs | null = null;
+  private projectedCheckpointDay: number | null = null;
   private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
   private lastOriginCrisis: string | null = null;
   private lastAlienPhase: string | null = null;
@@ -804,6 +805,9 @@ export class Game {
   }
 
   private downloadManifest(): void {
+    const completed = this.simulation.drain();
+    if (completed) this.applySimulationSnapshot(completed);
+    this.captureChronicleCheckpoint(yearFromDays(this.simulation.snapshot.elapsedDays));
     const manifest = createWorldManifest(this.manifest.config, this.directiveHistory);
     const payload = serializeExperiment({
       manifest,
@@ -823,9 +827,7 @@ export class Game {
         checkpointEvery: 1,
       },
       events: this.chronicle.getEvents(),
-      checkpoints: this.chronicle.getCheckpoints().length > 0
-        ? this.chronicle.getCheckpoints()
-        : [{ year: yearFromDays(this.simDays), snapshot: structuredClone(this.simulation.snapshot) }],
+      checkpoints: this.chronicle.getCheckpoints(),
     });
     const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
     const link = document.createElement("a");
@@ -833,7 +835,7 @@ export class Game {
     link.download = `${manifest.id}-checkpoint.json`;
     link.click();
     URL.revokeObjectURL(url);
-    this.setHint("Saved a reproducible world manifest and current simulation checkpoint.");
+    this.setHint("Saved the world manifest, chronicle, and latest completed settlement checkpoint.");
   }
 
   /** Pointer navigation changes only the observer's point of view. It never
@@ -852,16 +854,18 @@ export class Game {
     });
     this.canvas.addEventListener("pointerleave", () => { this.pointerDown = null; });
     window.addEventListener("keydown", (event) => {
-      if (!event.key.startsWith("Arrow") || this.isTyping()) return;
+      if (!event.key.startsWith("Arrow") || this.isTyping() || document.querySelector("dialog[open]")) return;
       this.navigationKeys.add(event.key);
       this.observerMove = null;
       event.preventDefault();
     });
     window.addEventListener("keyup", (event) => {
       if (!event.key.startsWith("Arrow")) return;
+      const wasNavigating = this.navigationKeys.has(event.key);
       this.navigationKeys.delete(event.key);
-      event.preventDefault();
+      if (wasNavigating) event.preventDefault();
     });
+    window.addEventListener("blur", () => this.navigationKeys.clear());
   }
 
   private isTyping(): boolean {
@@ -1062,24 +1066,29 @@ export class Game {
     );
   }
 
-  private advanceDeepTime(years: number): void {
+  private advanceDeepTime(years: number): boolean {
     if (!this.lastSimulationInputs) {
       this.setHint("The first season is still being observed. Try the deep-time request again in a moment.");
-      return;
+      return false;
     }
     this.simDays += years * 12;
+    this.projectedCheckpointDay = Math.max(this.projectedCheckpointDay ?? 0, this.simulation.snapshot.elapsedDays) + years * 12;
     // Deep time changes the chronicle, not the observer's current sky.
     this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
     const projection = this.simulation.advanceYears(this.lastSimulationInputs, years);
-    if (projection) this.applySimulationSnapshot(projection);
-    this.captureChronicleCheckpoint();
+    if (projection) {
+      this.applySimulationSnapshot(projection);
+      this.captureChronicleCheckpoint();
+      this.projectedCheckpointDay = null;
+    }
     this.setHint(`Deep-time projection: ${years.toLocaleString()} years pass. The observer is now in year ${yearFromDays(this.simDays)}.`);
     this.refreshHud();
+    return true;
   }
 
   private advanceTimeStep(years: number): void {
     this.setObserverSpeed(0);
-    this.advanceDeepTime(years);
+    if (!this.advanceDeepTime(years)) return;
     const label = years === 1 ? "1 year" : `${years.toLocaleString()} years`;
     this.setHint(`${label} projected. Year ${yearFromDays(this.simDays)} is now paused for observation.`);
   }
@@ -4314,6 +4323,15 @@ export class Game {
 
   private loop = (): void => {
     if (!this.running) return;
+    const completed = this.simulation.drain();
+    if (completed) {
+      this.applySimulationSnapshot(completed);
+      if (this.projectedCheckpointDay !== null && completed.elapsedDays >= this.projectedCheckpointDay) {
+        this.captureChronicleCheckpoint();
+        this.projectedCheckpointDay = null;
+      }
+      this.refreshHud();
+    }
     const dt = Math.min(this.clock.getDelta(), 0.08);
     const time = this.clock.elapsedTime;
     const simDt = this.speed === 0 ? 0 : dt * this.speed;

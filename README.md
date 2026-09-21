@@ -1,53 +1,96 @@
 # Tiny Civilization
 
-A small 3D hex-map civilization builder. Establish a village, balance food and
-housing, then watch neighbouring societies grow across a procedural archipelago.
+An observer-driven civilization simulation about three communities sharing a
+river basin. Households farm, cut timber, make tools, trade, migrate, and respond
+to changes in land and policy. The main interface makes those relationships
+visible through a 3D basin, settlement ledgers, a causal chronicle, and
+counterfactual comparison.
 
 ## Run
+
+Requires Node.js 22.6 or newer and a browser with WebGL 2 support.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local URL Vite prints (usually http://localhost:5173).
+Open the local URL Vite prints (usually http://localhost:5173). The generated
+seed is written to the URL, so copying the URL reproduces the same initial basin.
 
-## Controls
+```bash
+npm run check    # regression tests, TypeScript checks, and production build
+npm run preview  # serve the production build locally
+npm run research # headless branch, ensemble, and ablation examples for the legacy model
+```
 
-- The council builds, expands, trades, and responds to shortages autonomously; there is no manual building or keyboard play.
-- Choose a Frontier camp, Farmers’ village, Established city, or Deep-space spacecraft as the origin; each begins with distinct assets and pressures. New worlds default to a broad, procedural continental landmass; archipelago and shattered geographies are optional world forms.
-- Propose possible changes in plain language, for example: “secure food, then develop coastal trade.”
-- Use the Timeline selector for 1×–8×, pause, or years pace (96×). The same pace changes also work in writing: “speed 2×”, “years pace”, or “pause time”.
-- For a systems-level future projection, write “show 1 million years” (or another positive number of years). This converges recurring systems rather than replaying every day.
-- Instructions can contain ordered priorities; the council moves on when the current one is secure.
-- Use **Export chronicle** to download the reproducible world manifest, active directives, inputs, and current worker checkpoint as JSON. Run `npm run research` for a deterministic render-free experiment example.
-- Click anywhere in the scene to smoothly travel the observer there, or hold the arrow keys to pan in the camera's facing direction. Drag to orbit and scroll to zoom. These only change the observer's view—the council remains autonomous. The World view and observer log make changes easier to follow.
-- Use the Lens selector to frame the settlement, its working lands, an individual citizen, a neighboring society, or the regional network.
-- Each society has a heritable cultural lineage. Cooperation, curiosity, mobility, stewardship, and resilience adapt over generations; practices can emerge locally and pass along signal corridors, but survive only if their new environment supports them.
+The production build is in `dist/` and can be served by a static web host.
+
+## Observe and experiment
+
+- Drag the basin to orbit, scroll to zoom, and use the map selector to inspect
+  landscape, fertility, or forest cover.
+- Select Willowbank, Pinewatch, or Stoneford to inspect population, household
+  livelihoods, stores, prices, public funds, and trade routes.
+- Pause or change the seasonal pace, or advance exactly one or ten years.
+- Introduce a two-year drought, change a settlement's sales tax, or commission
+  a bridge. **Compare with no changes** reruns the same seed to the same season
+  without interventions.
+- **Save** downloads the complete basin state as JSON. **Load** validates and
+  restores households, cargo, public works, ecology, interventions, and bounded
+  history so the run can continue exactly.
+- **New basin** creates a fresh seed. A URL with `?seed=42` starts the same basin
+  each time.
+
+The earlier world-scale sandbox remains available at `?mode=legacy`. It includes
+configurable origins and geographies, written council directives, deep-time
+projection, culture and institutions, and the broader Three.js world view.
 
 ## Architecture
 
-- `src/game.ts` owns the simulation, input, and Three.js scene lifecycle.
-- `src/world.ts` and `src/hex.ts` generate and address the procedural world.
-- `src/buildings.ts`, `src/ai.ts`, and `src/time.ts` contain game rules.
-- `src/models.ts`, `src/look.ts`, and `src/life.ts` produce the visual world.
-- `src/ui.ts` presents simulation state in the HUD, keeping DOM work out of the
-  game loop.
-- `src/world-state.ts` holds persistent chunk state independently of rendered meshes;
-  `src/terrain-chunks.ts` renders the distant horizon with GPU instancing and LOD.
-- `src/simulation/worker.ts` advances the focused settlement at sub-day fidelity and
-  remote societies with a cheaper fast-forward model.
-- `src/simulation/cellular.ts`, `src/simulation/evolution.ts`, and
-  `src/simulation/network.ts` model local ecological feedback, emergent eras, and
-  exchange between autonomous regions. `src/simulation/culture.ts` adds inherited
-  cultural tendencies, adaptive practices, and cultural transmission.
-- `src/spacecraft.ts` provides the sealed orbital-habitat observer scenario.
+- `src/main.ts` selects the basin by default and lazy-loads the earlier sandbox.
+- `src/basin/world.ts` creates the deterministic terrain, drainage graph, three
+  settlements, and least-cost routes.
+- `src/basin/engine.ts` owns household production, consumption, local and
+  regional markets, cargo, ecology, migration, public works, and save validation.
+- `src/basin/view.ts` renders the basin and its map layers with Three.js, while
+  `src/basin/app.ts` owns the observer interface and experiment controls.
+- `src/legacy.ts` starts the earlier sandbox. Its browser lifecycle remains in
+  `src/game.ts`, and its render-free research model lives under `src/simulation/`.
+- `src/simulation/worker.ts` advances the focused legacy settlement and remote
+  regions outside the render loop.
 
-## Next steps to grow
+## Reproducibility and scope
 
-- A settlement ledger: compact production/consumption trend lines so observers
-  can predict shortages instead of discovering them only when stock hits zero.
-- Research-era civic projects that alter building silhouettes and introduce new
-  institutions, rather than simply raising output.
-- Richer diplomacy between societies: gifts, disputes, festivals, and treaties
-  that evolve independently of a single trade route.
+Both engines are deterministic for the same seed and inputs. Basin saves contain
+the full authoritative state and restore exactly after JSON serialization. The
+basin keeps the latest 160 seasonal observations, 120 causal events, and 80
+interventions. Its baseline comparison is a counterfactual from the same seed;
+it does not claim to isolate one intervention when several changes were made.
+
+Legacy research checkpoints include random-generator state, cellular ecology,
+and fractional time. Model version `research-foundation-2` corrects cultural IDs,
+climate time units, and ecological coupling, so its results differ from older
+checkpoints. Deep-time requests converge recurring systems instead of replaying
+every day, and different step sizes need not produce identical outcomes.
+
+These are exploratory models, not calibrated historical or economic predictions.
+The older `src/simulation/balance-test.ts` diagnostic still reports six unmet
+survival and disease expectations in centuries-long scenarios. The regression
+suite passes, but those balance failures remain model limitations. The research
+proposal and technical specifications also describe ambitions beyond the shipped
+interfaces.
+
+## Highest-value next steps
+
+- Calibrate the legacy food and disease systems until the long-horizon balance
+  diagnostic passes or replace its obsolete plague-memory expectation.
+- Add browser-level interaction and accessibility tests for save/load, comparison,
+  WebGL fallback, narrow layouts, keyboard use, and reduced-motion behavior.
+- Extend basin policy beyond a global drought, one tax, and bridges: upstream
+  water use, shared reserves, route disruption, and agreements would make the
+  river relationship materially consequential.
+- Expand trends and counterfactuals beyond food and population to show prices,
+  household wellbeing, migration, land change, and the effect of each intervention.
+- Split or defer more Three.js code if initial-load performance becomes a problem;
+  the production build currently emits a chunk-size warning for the renderer.

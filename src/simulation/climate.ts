@@ -38,6 +38,10 @@ export class ClimateSystem {
     return this.current;
   }
 
+  restore(elapsedDays: number): void {
+    this.elapsedDays = elapsedDays;
+  }
+
   get current(): ClimateForcing {
     const seasonal = Math.sin((this.elapsedDays / 12) * Math.PI * 2 + this.seasonalPhase);
     const regime = Math.sin((this.elapsedDays / 148) * Math.PI * 2 + this.regimePhase);

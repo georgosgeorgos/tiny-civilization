@@ -3,103 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tiny Civilization</title>
+    <meta name="description" content="Observe three communities sharing a river basin. Explore how land, livelihoods, trade, and public decisions shape their futures." />
+    <title>Tiny Civilization · River Basin</title>
   </head>
   <body>
-    <div id="app">
-      <canvas id="scene"></canvas>
-      <div class="vignette"></div>
-      <header class="hud hud-top">
-        <div class="brand">Tiny Civilization</div>
-        <button type="button" id="new-world" class="new-world">New world</button>
-        <button type="button" id="export-manifest" class="new-world">Export chronicle</button>
-        <div class="stats">
-          <span id="stat-turn">Year 1 · Spring</span>
-          <span id="stat-goal">Milestone: prosperity</span>
-          <span id="stat-gold" class="resource">Gold 72</span>
-          <span id="stat-food" class="resource">Food 14</span>
-          <span id="stat-wood" class="resource">Wood 16</span>
-          <span id="stat-mood" class="resource">Mood 52</span>
-          <span id="stat-health" class="resource">Health 100</span>
-          <span id="stat-people">People 0</span>
-          <span id="stat-tech">Tech 1</span>
-          <span id="stat-evolution">Foundational</span>
-          <span id="stat-land" class="resource">Land 100</span>
-          <span id="stat-culture">unsettled custom</span>
-        </div>
-      </header>
-      <aside class="hud observer" aria-live="polite">
-        <div class="observer-title">Civilization observer</div>
-        <div class="system-reading"><strong id="system-outlook">Reading the settlement…</strong><span id="system-cause">Conditions are still forming.</span></div>
-        <ol id="activity-feed" class="activity-feed"></ol>
-        <p>The council acts autonomously; write directives to change its priorities. Click to travel or use arrow keys to move the observer; the log records each significant decision.</p>
-      </aside>
-        <div id="event-banner" class="hud event-banner" style="display:none"></div>
-        <p id="hint" class="hud hud-hint">The council is growing the camp. Write a directive to change its priorities.</p>
-      <footer class="hud hud-bottom">
-        <div class="zoom-controls" aria-label="Zoom controls"><span>View</span><button type="button" data-zoom="70">Local</button><button type="button" data-observatory-view="world" aria-pressed="true">World</button><button type="button" data-observatory-view="universe" aria-pressed="false">Universe</button><button type="button" data-observatory-view="subatomic" aria-pressed="false">Subatomic</button><button type="button" id="recenter-view">Recenter</button><small id="view-scale">Settlement scale · 1 m</small><small id="planet-readout">Tidelight · the simulated home world</small></div>
-        <label class="observer-pace">Lens
-          <select id="lens-selector" aria-label="Observer perspective">
-            <option value="settlement">Settlement</option>
-            <option value="fields">Working lands</option>
-            <option value="citizen">Citizen</option>
-            <option value="society">Neighbor society</option>
-            <option value="network">Regional network</option>
-          </select>
-        </label>
-        <section class="council" aria-label="Council directives">
-          <div class="council-title">Propose a change</div>
-          <p id="council-order" class="council-order">The council is keeping the settlement balanced.</p>
-          <form id="directive-form"><input id="directive-input" aria-label="Possible change for the council" placeholder="e.g. secure food; years pace; show 1 million years" /><button type="submit">Propose change</button></form>
-        </section>
-        <label class="observer-pace">Timeline
-          <select id="speed-selector" aria-label="Simulation speed">
-            <option value="0">Paused</option>
-            <option value="1">1×</option>
-            <option value="2">2×</option>
-            <option value="4" selected>4×</option>
-            <option value="8">8×</option>
-            <option value="96">Years · 96×</option>
-          </select>
-        </label>
-        <div class="time-advance" aria-label="Time advance controls"><span>Advance</span><button type="button" data-advance="1" class="century-step">+1 yr</button><button type="button" data-advance="100" class="century-step">+100 yr</button><button type="button" data-advance="1000" class="century-step">+1000 yr</button></div>
-      </footer>
-    </div>
-    <dialog id="setup" class="setup">
-      <form id="setup-form" method="dialog">
-        <p class="eyebrow">New chronicle</p>
-        <div class="setup-heading"><div><h1>Choose the first story</h1><p class="setup-copy">Start with a vivid premise; the council will take it from there.</p></div><button type="button" id="setup-surprise" class="surprise">Surprise me</button></div>
-        <input type="hidden" name="origin" value="camp" />
-        <input type="hidden" name="archetype" value="continental" />
-        <input type="hidden" name="goal" value="prosper" />
-        <section class="setup-section" aria-labelledby="origin-label"><div class="setup-label" id="origin-label">Where do we begin?</div><div class="story-grid">
-          <button type="button" class="story-card camp is-selected" data-choice="origin" data-value="camp" aria-pressed="true"><strong>Frontier camp</strong><span>Five people, rough tools, room to adapt.</span></button>
-          <button type="button" class="story-card farmers" data-choice="origin" data-value="farmers" aria-pressed="false"><strong>Farmers’ village</strong><span>Full granaries, rooted customs, fertile pressure.</span></button>
-          <button type="button" class="story-card city" data-choice="origin" data-value="city" aria-pressed="false"><strong>Established city</strong><span>Wealth and institutions—plus expectations.</span></button>
-          <button type="button" class="story-card spacecraft" data-choice="origin" data-value="spacecraft" aria-pressed="false"><strong>Deep-space habitat</strong><span>A sealed ecology, finite hull, research future.</span></button>
-        </div></section>
-        <section class="setup-section split-choice"><div><div class="setup-label">What kind of place?</div><div class="choice-list">
-          <button type="button" data-choice="archetype" data-value="continental" class="choice is-selected" aria-pressed="true"><strong>Continental</strong><span>Broad connected landmasses</span></button>
-          <button type="button" data-choice="archetype" data-value="archipelago" class="choice" aria-pressed="false"><strong>Archipelago</strong><span>Coastal exchange and crossings</span></button>
-          <button type="button" data-choice="archetype" data-value="shattered" class="choice" aria-pressed="false"><strong>Shattered</strong><span>Fragments and hard borders</span></button>
-          <button type="button" data-choice="archetype" data-value="frontier" class="choice" aria-pressed="false"><strong>Wild frontier</strong><span>Unstable, resource-rich margins</span></button>
-        </div></div><div><div class="setup-label">What should matter first?</div><div class="choice-list">
-          <button type="button" data-choice="goal" data-value="prosper" class="choice is-selected" aria-pressed="true"><strong>Prosper</strong><span>Build a flourishing settlement</span></button>
-          <button type="button" data-choice="goal" data-value="survive" class="choice" aria-pressed="false"><strong>Endure</strong><span>Carry twenty people through winter</span></button>
-          <button type="button" data-choice="goal" data-value="explore" class="choice" aria-pressed="false"><strong>Connect</strong><span>Seed three distant settlements</span></button>
-        </div></div></section>
-        <div id="scenario-summary" class="scenario-summary">A small camp on a connected continent, seeking prosperity.</div>
-        <label class="world-twist">Add a world twist <span>optional</span><textarea name="world-prompt" rows="2" placeholder="e.g. a volatile, advanced frontier of strange ruins"></textarea></label>
-        <details class="fine-tune"><summary>Fine tune this beginning</summary><div class="fine-tune-grid">
-          <label>Starting stores<select name="resources"><option value="lean">Lean — a hard beginning</option><option value="standard" selected>Standard</option><option value="abundant">Abundant — build quickly</option></select></label>
-          <label>World temperament<select name="temperament"><option value="calm">Calm — longer weather cycles</option><option value="balanced" selected>Balanced</option><option value="wild">Wild — fast-changing forces</option></select></label>
-          <label>Technology<select name="technology"><option value="primitive" selected>Primitive — fundamentals</option><option value="developing">Developing — craft base</option><option value="advanced">Advanced — fast start</option></select></label>
-          <label>Visual character<select name="style"><option value="natural" selected>Natural — warm coastline</option><option value="austere">Austere — subdued north</option><option value="radiant">Radiant — vivid contrast</option></select></label>
-          <label>Opening pace<select name="speed"><option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option><option value="96">Years pace — 96×</option></select></label>
-        </div></details>
-        <div class="setup-actions"><button type="button" id="setup-cancel">Cancel</button><button type="submit" class="primary">Begin simulation</button></div>
-      </form>
-    </dialog>
+    <div id="app"></div>
+    <noscript>Tiny Civilization needs JavaScript to simulate the basin.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

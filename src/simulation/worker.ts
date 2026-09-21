@@ -30,7 +30,7 @@ self.onmessage = (event: MessageEvent<SimulationRequest>) => {
       }
       regional.setStores(region.stores);
       regional.advance(region.inputs);
-      return { id: region.id, snapshot: structuredClone(regional.snapshot) };
+      return { id: region.id, snapshot: regional.checkpoint };
     });
     const response: SimulationResponse = { type: "region-snapshots", snapshots };
     self.postMessage(response);
@@ -40,6 +40,6 @@ self.onmessage = (event: MessageEvent<SimulationRequest>) => {
     return;
   }
   if (!engine) return;
-  const response: SimulationResponse = { type: "snapshot", snapshot: structuredClone(engine.snapshot) };
+  const response: SimulationResponse = { type: "snapshot", snapshot: engine.checkpoint };
   self.postMessage(response);
 };

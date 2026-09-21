@@ -57,7 +57,7 @@ export function createWorldManifest(config: SimulationConfig, directives: readon
   const id = [stableConfig.seed, stableConfig.archetype, stableConfig.origin, stableConfig.temperament].join("-");
   return {
     schema: "tiny-civilization.world/v1",
-    modelVersion: "research-foundation-1",
+    modelVersion: "research-foundation-2",
     id: `world-${id}`,
     config: stableConfig,
     directives: [...directives],

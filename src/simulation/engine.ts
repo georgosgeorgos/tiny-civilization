@@ -69,17 +69,38 @@ export class SimulationEngine {
     return this.state;
   }
 
+  get checkpoint(): SimulationSnapshot {
+    return {
+      ...structuredClone(this.state),
+      continuation: {
+        randomState: this.random.checkpoint,
+        cells: this.cells.checkpoint,
+        accumulator: this.accumulator,
+        lastPandemicYear: this.lastPandemicYear,
+        cultureToEcology: this.lastCultureToEcology,
+      },
+    };
+  }
+
   setStores(stores: Stores): void {
     this.state.stores = { ...stores };
   }
 
   loadCheckpoint(snapshot: SimulationSnapshot): void {
     this.state = structuredClone(snapshot);
-    this.accumulator = 0;
-    this.lastPandemicYear = snapshot.pandemic?.startYear ?? -100;
+    delete this.state.continuation;
+    this.climate.restore(snapshot.elapsedDays);
+    this.accumulator = snapshot.continuation?.accumulator ?? 0;
+    this.lastPandemicYear = snapshot.continuation?.lastPandemicYear ?? snapshot.pandemic?.startYear ?? -100;
+    this.lastCultureToEcology = snapshot.continuation?.cultureToEcology ?? true;
+    if (snapshot.continuation) {
+      this.random.restore(snapshot.continuation.randomState);
+      this.cells.restore(snapshot.continuation.cells);
+    }
   }
 
   advance(inputs: SimulationInputs): Readonly<SimulationSnapshot> {
+    if (!Number.isFinite(inputs.deltaDays)) throw new RangeError("deltaDays must be finite");
     this.accumulator += Math.max(0, inputs.deltaDays);
     const stepDays = inputs.fidelity === "remote" ? REMOTE_STEP_DAYS : LOCAL_STEP_DAYS;
     while (this.accumulator >= stepDays) {
@@ -95,8 +116,10 @@ export class SimulationEngine {
    * replaying millions of daily random events.
    */
   advanceYears(inputs: SimulationInputs, years: number): Readonly<SimulationSnapshot> {
+    if (!Number.isFinite(years)) throw new RangeError("years must be finite");
     const span = Math.max(0, Math.min(1_000_000_000, years));
     if (span === 0) return this.state;
+    this.lastCultureToEcology = inputs.cultureToEcology !== false;
     this.reconcilePopulation(inputs.population, inputs.demographics);
     const infrastructure = clamp01(
       inputs.infrastructure.roads * 0.035 + inputs.infrastructure.ports * 0.07 + inputs.infrastructure.tradeRoutes * 0.16,
@@ -104,8 +127,8 @@ export class SimulationEngine {
     const institutionRules = institutionEffects(this.state.institutions);
     const innovationRules = innovationEffects(this.state.innovations);
     const recoveryYears = Math.min(span, 80);
-    const climate = this.climate.advance(span);
-    this.updateEcology(inputs.buildings, inputs.disruption, recoveryYears, climate);
+    const climate = this.climate.advance(span * DAYS_PER_YEAR);
+    this.updateEcology(inputs.buildings, inputs.disruption, recoveryYears * DAYS_PER_YEAR, climate, inputs.diseaseImport ?? 0);
     this.updateBioculturalDiversity();
     const foodNeed = inputs.population * 1.5;
     const crisisRules = this.crisisRules();
