@@ -4,10 +4,10 @@ const appRoot = root;
 
 async function start(): Promise<void> {
   const url = new URL(window.location.href);
-  if (url.searchParams.get("mode") === "legacy") {
-    const { default: markup } = await import("./legacy.html?raw");
+  if (url.searchParams.get("mode") !== "basin") {
+    const { default: markup } = await import("./civilization.html?raw");
     document.body.innerHTML = markup;
-    await import("./legacy");
+    await import("./civilization-app");
     return;
   }
 

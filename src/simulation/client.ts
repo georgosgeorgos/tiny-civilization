@@ -1,6 +1,6 @@
 import { SimulationEngine } from "./engine.ts";
 import type { SimulationRequest, SimulationResponse } from "./protocol.ts";
-import type { RegionSimulationInput, SimulationInputs, SimulationSnapshot, Stores } from "./types.ts";
+import type { GenerativePractice, RegionSimulationInput, SimulationInputs, SimulationSnapshot, Stores } from "./types.ts";
 
 /** Async browser adapter with a synchronous fallback for restricted environments. */
 export class SimulationClient {
@@ -46,12 +46,28 @@ export class SimulationClient {
     }
   }
 
+  /** Finish queued work before running the coupled world synchronously in small batches. */
+  useSynchronous(): Readonly<SimulationSnapshot> {
+    if (this.worker) this.recoverWorker();
+    this.drain();
+    return this.current;
+  }
+
   get snapshot(): Readonly<SimulationSnapshot> {
     return this.pending ?? this.current;
   }
 
   setStores(stores: Stores): void {
     this.stores = { ...stores };
+  }
+
+  addPractice(practice: GenerativePractice): void {
+    if (this.worker) this.post({ type: "add-practice", practice });
+    else {
+      this.fallback.addPractice(practice);
+      this.current = this.fallback.checkpoint;
+      this.pending = null;
+    }
   }
 
   advance(inputs: SimulationInputs): Readonly<SimulationSnapshot> | null {
@@ -173,6 +189,8 @@ export class SimulationClient {
         this.fallback.setStores(request.stores);
         if (request.type === "advance") this.fallback.advance(request.inputs);
         else this.fallback.advanceYears(request.inputs, request.years);
+      } else if (request.type === "add-practice") {
+        this.fallback.addPractice(request.practice);
       } else if (request.type === "advance-regions") {
         for (const region of request.regions) {
           let engine = this.regionalFallback.get(region.id);

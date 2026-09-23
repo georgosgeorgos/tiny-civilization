@@ -1,3 +1,5 @@
+import { allocateLabor } from "./simulation/labor.ts";
+import { runWorldYears } from "./simulation/world-run.ts";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -61,7 +63,7 @@ import type { Capabilities } from "./simulation/evolution.ts";
 import { exchangeRegions, type NetworkConnection, type NetworkRegion } from "./simulation/network.ts";
 import { forkCulture, shouldSocietyCollapse, shouldSocietyFragment } from "./simulation/lineage.ts";
 import { generatePersonName } from "./simulation/culture.ts";
-import { shouldBirth, shouldExileHungry, computeDeaths } from "./population.ts";
+import { annualBirths, hardshipLosses, computeDeaths } from "./population.ts";
 import { DiplomacyManager } from "./diplomacy-manager.ts";
 import { createWorldManifest, serializeExperiment, type WorldManifest } from "./simulation/manifest.ts";
 import { classifyChronicleEvent, EventChronicle } from "./simulation/chronicle.ts";
@@ -80,17 +82,7 @@ import { advanceWar, computeStrength, createWar, type WarState } from "./simulat
 import { SeededRandom } from "./simulation/random.ts";
 import { computeDemographics, type CatastropheState, type CivilizationGoal, type CommunicationLink, type Critter, type District, type ObservatoryView, type ObserverLens, type Person, type Society, type Tile, type TradeRoute, type WorldEvent } from "./game-types";
 
-const PEOPLE_PER_BUILDING: Record<BuildingId, { count: number; role: PersonRole }> = {
-  hut: { count: BUILDINGS.hut.workers, role: BUILDINGS.hut.workerRole },
-  farm: { count: BUILDINGS.farm.workers, role: BUILDINGS.farm.workerRole },
-  mine: { count: BUILDINGS.mine.workers, role: BUILDINGS.mine.workerRole },
-  fishery: { count: BUILDINGS.fishery.workers, role: BUILDINGS.fishery.workerRole },
-  lumber: { count: BUILDINGS.lumber.workers, role: BUILDINGS.lumber.workerRole },
-  shrine: { count: BUILDINGS.shrine.workers, role: BUILDINGS.shrine.workerRole },
-  market: { count: BUILDINGS.market.workers, role: BUILDINGS.market.workerRole },
-  orchard: { count: BUILDINGS.orchard.workers, role: BUILDINGS.orchard.workerRole },
-  forge: { count: BUILDINGS.forge.workers, role: BUILDINGS.forge.workerRole },
-};
+
 
 const JOB_FOR_ROLE: Partial<Record<PersonRole, BuildingId>> = {
   farmer: "farm",
@@ -234,6 +226,11 @@ export class Game {
   private readonly chronicle: EventChronicle;
   private readonly directiveHistory: string[] = [];
   private lastSimulationInputs: SimulationInputs | null = null;
+  private readonly hardshipCredits = new Map<string, number>();
+  private readonly birthCredits = new Map<string, number>();
+  private worldRun: AbortController | null = null;
+  private batchUpdating = false;
+  private lastRunRender = 0;
   private projectedCheckpointDay: number | null = null;
   private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
   private lastOriginCrisis: string | null = null;
@@ -801,6 +798,11 @@ export class Game {
     document.querySelector<HTMLSelectElement>("#lens-selector")?.addEventListener("change", (event) => {
       this.setObserverLens((event.target as HTMLSelectElement).value as ObserverLens);
     });
+    document.querySelector("#world-run-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.advanceTimeStep(document.querySelector<HTMLInputElement>("#world-run-years")!.valueAsNumber);
+    });
+    document.querySelector("#stop-world-run")?.addEventListener("click", () => this.worldRun?.abort());
     document.querySelector<HTMLButtonElement>("#export-manifest")?.addEventListener("click", () => this.downloadManifest());
   }
 
@@ -993,6 +995,7 @@ export class Game {
 
   private setObserverSpeed(value: number): void {
     if (![0, 1, 2, 4, 8, 96].includes(value)) return;
+    this.worldRun?.abort();
     this.speed = value;
     const selector = document.querySelector<HTMLSelectElement>("#speed-selector");
     if (selector) selector.value = String(value);
@@ -1067,6 +1070,7 @@ export class Game {
   }
 
   private advanceDeepTime(years: number): boolean {
+    if (this.worldRun) { this.setHint("Stop the current run before requesting a deep-time projection."); return false; }
     if (!this.lastSimulationInputs) {
       this.setHint("The first season is still being observed. Try the deep-time request again in a moment.");
       return false;
@@ -1086,11 +1090,40 @@ export class Game {
     return true;
   }
 
-  private advanceTimeStep(years: number): void {
+  private async advanceTimeStep(years: number): Promise<void> {
+    if (this.worldRun) return;
     this.setObserverSpeed(0);
-    if (!this.advanceDeepTime(years)) return;
-    const label = years === 1 ? "1 year" : `${years.toLocaleString()} years`;
-    this.setHint(`${label} projected. Year ${yearFromDays(this.simDays)} is now paused for observation.`);
+    this.applySimulationSnapshot(this.simulation.useSynchronous());
+    const run = new AbortController(); this.worldRun = run;
+    const status = document.querySelector<HTMLElement>("#world-run-status");
+    const controls = document.querySelectorAll<HTMLButtonElement>("[data-advance], #new-world, #export-manifest, #run-world");
+    controls.forEach((button) => { button.disabled = true; });
+    const cancel = document.querySelector<HTMLButtonElement>("#stop-world-run");
+    if (cancel) cancel.disabled = false;
+    let lastRefresh = 0;
+    try {
+      await runWorldYears({ years, signal: run.signal, tick: (days) => {
+        this.batchUpdating = true;
+        try {
+          this.weatherDays += days;
+          this.tickWorld(days * SECONDS_PER_DAY);
+        } finally { this.batchUpdating = false; }
+      }, progress: (days, total) => {
+        if (performance.now() - lastRefresh < 200 && days < total) return;
+        lastRefresh = performance.now();
+        if (status) status.textContent = `Simulating ${(days / 12).toFixed(1)} / ${total / 12} years · population, construction, trade, and generations are active.`;
+        this.refreshHud();
+      } });
+      this.captureChronicleCheckpoint();
+      if (status) status.textContent = `${run.signal.aborted ? "Stopped" : "Completed"} at year ${yearFromDays(this.simDays)}. Continue from here with Play or another run.`;
+    } catch (error) {
+      if (status) status.textContent = error instanceof Error ? error.message : "The run stopped unexpectedly.";
+    } finally {
+      this.worldRun = null;
+      controls.forEach((button) => { button.disabled = false; });
+      if (cancel) cancel.disabled = true;
+      this.refreshHud();
+    }
   }
 
   private placeBuilding(
@@ -1134,14 +1167,14 @@ export class Game {
     this.refreshHud();
     if (instant) {
       this.popIns.push({ object: tile.buildingMesh, t: 0, target: 1.22 });
-      this.finishBuilding(tile, opts.silent);
+      this.finishBuilding(tile, opts.silent, true);
     } else if (!opts.silent && opts.owner === "player") {
       this.setHint(`Work begins on a ${def.name.toLowerCase()}.`);
     }
     return true;
   }
 
-  private finishBuilding(tile: Tile, silent = true): void {
+  private finishBuilding(tile: Tile, silent = true, founding = false): void {
     if (!tile.building || tile.ready) return;
     tile.ready = true;
     tile.buildLeft = 0;
@@ -1155,8 +1188,8 @@ export class Game {
     this.markRoads(tile);
     this.attachPort(tile);
     this.persistTile(tile);
-    if (tile.building === "hut") {
-      this.spawnOne(tile, "villager", 0, tile.owner === "tribe");
+    if (tile.building === "hut" && founding) {
+      for (let index = 0; index < def.housing; index++) this.spawnOne(tile, "villager", index, tile.owner === "tribe");
     }
     this.assignHomes();
     this.assignJobs();
@@ -1259,18 +1292,32 @@ export class Game {
     tile.buildingMesh.add(port);
   }
 
+  private disposePersonMesh(mesh: THREE.Object3D): void {
+    this.peopleGroup.remove(mesh);
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    mesh.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      geometries.add(object.geometry);
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+    });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    for (let index = this.popIns.length - 1; index >= 0; index--) if (this.popIns[index].object === mesh) this.popIns.splice(index, 1);
+  }
+
   private setRole(person: Person, role: PersonRole): void {
     if (person.role === role) return;
     const visible = person.mesh.visible;
     const position = person.mesh.position.clone();
     const rotation = person.mesh.rotation.clone();
     const scale = person.mesh.scale.clone();
-    this.peopleGroup.remove(person.mesh);
+    this.disposePersonMesh(person.mesh);
     person.role = role;
     const mesh = makeHuman(role, person.seed);
     mesh.position.copy(position);
     mesh.rotation.copy(rotation);
-    mesh.scale.copy(scale);
+    mesh.scale.copy(scale.lengthSq() < 0.01 ? new THREE.Vector3(2.45, 2.45, 2.45) : scale);
     mesh.visible = visible;
     person.mesh = mesh;
     this.peopleGroup.add(mesh);
@@ -1309,13 +1356,13 @@ export class Game {
       tribe,
       islandId: tile.islandId,
       seed,
-      age: 16 + Math.floor(seed * 40),
+      age: inherit ? 0 : 18 + Math.floor(seed * 20),
       strategy: parent ? inheritBehavioralStrategy(parent.strategy, seed) : initialBehavioralStrategy(seed),
       knowledgeCarrier: [],
     };
     mesh.position.copy(this.personWorldPos(person, tile, tile, 1));
     mesh.scale.setScalar(0.01);
-    this.popIns.push({ object: mesh, t: 0, target: 2.45 });
+    this.popIns.push({ object: mesh, t: 0, target: 2.45 * (inherit ? 0.55 : 1) });
     this.peopleGroup.add(mesh);
     this.people.push(person);
     this.addToRegionIndex(person);
@@ -1478,33 +1525,19 @@ export class Game {
   }
 
   private assignJobs(): void {
-    for (const person of this.people) {
-      if (person.role === "villager") continue;
-      const work = this.tiles.get(hexKey(person.workQ, person.workR));
-      if (!work?.building || work.building === "hut" || work.buildLeft > 0 || work.islandId !== person.islandId) {
-        this.setRole(person, "villager");
-        person.workQ = person.homeQ;
-        person.workR = person.homeR;
-      }
-    }
-    for (const tile of this.tiles.values()) {
-      if (!tile.building || tile.building === "hut" || tile.buildLeft > 0) continue;
-      const spec = PEOPLE_PER_BUILDING[tile.building];
-      const staff = this.people.filter(
-        (person) => person.islandId === tile.islandId && person.workQ === tile.q && person.workR === tile.r,
-      );
-      const need = spec.count - staff.length;
-      for (let i = 0; i < need; i += 1) {
-        const idle = this.people.find(
-          (person) =>
-            person.islandId === tile.islandId &&
-            person.tribe === (tile.owner === "tribe") &&
-            person.role === "villager",
-        );
-        if (!idle) break;
-        idle.workQ = tile.q;
-        idle.workR = tile.r;
-        this.setRole(idle, spec.role);
+    for (const [region, residents] of this.peopleByRegion) {
+      const tribe = region !== "player";
+      for (const island of new Set(residents.map((person) => person.islandId))) {
+        const people = residents.filter((person) => person.islandId === island);
+        const workplaces = [...this.tiles.values()].filter((tile) => tile.islandId === island && tile.building && tile.building !== "hut" && tile.ready && tile.owner === (tribe ? "tribe" : "player"));
+        const byId = new Map(workplaces.map((tile) => [hexKey(tile.q, tile.r), tile]));
+        const assignments = allocateLabor(people, workplaces.map((tile) => ({ id: hexKey(tile.q, tile.r), kind: tile.building!, workers: BUILDINGS[tile.building!].workers })), this.societies.get(region) ?? { food: this.food, wood: this.wood });
+        for (const person of people) {
+          const tile = byId.get(assignments.get(person.id) ?? "");
+          person.workQ = tile?.q ?? person.homeQ;
+          person.workR = tile?.r ?? person.homeR;
+          this.setRole(person, tile ? BUILDINGS[tile.building!].workerRole : "villager");
+        }
       }
     }
   }
@@ -1867,14 +1900,12 @@ export class Game {
   }
 
   private canSite(id: BuildingId, islandId?: string, treasury?: { gold: number; wood: number }): boolean {
-    if (this.findSite(id, islandId) === null) return false;
     const def = BUILDINGS[id];
     const purse = treasury ?? (islandId ? { gold: 0, wood: 0 } : { gold: this.gold, wood: this.wood });
-    return purse.gold >= def.goldCost && purse.wood >= def.woodCost;
+    return purse.gold >= def.goldCost && purse.wood >= def.woodCost && this.findSite(id, islandId) !== null;
   }
 
-  private territoryAllows(tile: Tile, owner: "player" | "tribe"): boolean {
-    const nearby = [...this.tiles.values()].filter((entry) => entry.owner === owner && entry.islandId === tile.islandId && entry.building && entry.ready);
+  private territoryAllows(tile: Tile, owner: "player" | "tribe", nearby: Tile[]): boolean {
     // A region needs one founding site before it can have a territorial core.
     // Subsequent expansion remains constrained to its own evolving claim.
     if (nearby.length === 0) return tile.building === null;
@@ -1893,11 +1924,19 @@ export class Game {
     const anchorQ = islandQ + offsetQ;
     const anchorR = islandR + offsetR;
     const ranked: { tile: Tile; score: number }[] = [];
+    const buildingsByRegion = new Map<string, Tile[]>();
+    for (const entry of this.tiles.values()) {
+      if (entry.owner !== owner || !entry.building) continue;
+      const group = buildingsByRegion.get(entry.islandId) ?? [];
+      group.push(entry); buildingsByRegion.set(entry.islandId, group);
+    }
+    const readyByRegion = new Map([...buildingsByRegion].map(([region, buildings]) => [region, buildings.filter((entry) => entry.ready)]));
+    const districtByRegion = new Map([...buildingsByRegion].map(([region, buildings]) => [region, buildings.filter((entry) => DISTRICT_FOR_BUILDING[entry.building!] === district)]));
     for (const tile of this.tiles.values()) {
-      if (tile.building || !tile.buildable || !biomeAllows(def, tile.biome) || !this.terrainAllows(id, tile) || !this.territoryAllows(tile, owner)) continue;
       if (tile.owner && tile.owner !== owner) continue;
       if (islandId && tile.islandId !== islandId) continue;
       if (!islandId && !this.playerIslands.has(tile.islandId)) continue;
+      if (tile.building || !tile.buildable || !biomeAllows(def, tile.biome) || !this.terrainAllows(id, tile) || !this.territoryAllows(tile, owner, readyByRegion.get(tile.islandId) ?? [])) continue;
       let score = 80 - hexDistance(tile.q - anchorQ, tile.r - anchorR) * 2.2;
       if (!islandId && tile.kind === "home") score += 40;
       let adjacent = 0;
@@ -1908,9 +1947,7 @@ export class Game {
         adjacent += 1;
       }
       score += adjacent * 8;
-      const localDistrict = [...this.tiles.values()].filter(
-        (entry) => entry.islandId === tile.islandId && entry.owner === owner && entry.building && DISTRICT_FOR_BUILDING[entry.building] === district,
-      );
+      const localDistrict = districtByRegion.get(tile.islandId) ?? [];
       const clusterDistance = localDistrict.reduce((best, entry) => Math.min(best, hexDistance(entry.q - tile.q, entry.r - tile.r)), Infinity);
       if (Number.isFinite(clusterDistance)) score += Math.max(0, 14 - clusterDistance * 3.5);
       if (id === "fishery" && tile.coast) score += 10;
@@ -1947,7 +1984,7 @@ export class Game {
     }
     const ordered = [...groups.entries()]
       .filter(([, group]) => group.kind !== "home" && group.tiles.length >= 8)
-      .filter(([islandId]) => !this.founded.has(islandId))
+      .filter(([islandId]) => !this.founded.has(islandId) && !this.fallenLineages.has(islandId))
       .filter(([islandId]) => (this.renewalUntil.get(islandId) ?? 0) <= this.simDays)
       .sort((a, b) => {
         const distA = hexDistance(Number(a[0].split(",")[0]), Number(a[0].split(",")[1]));
@@ -2080,7 +2117,7 @@ export class Game {
     for (let index = this.people.length - 1; index >= 0; index -= 1) {
       const person = this.people[index];
       if (!person?.tribe || person.islandId !== society.islandId) continue;
-      this.peopleGroup.remove(person.mesh);
+      this.disposePersonMesh(person.mesh);
       this.people.splice(index, 1);
     }
     this.peopleByRegion.delete(society.islandId);
@@ -2177,12 +2214,18 @@ export class Game {
   }
 
   private tryEmergencyFood(): void {
-    if (this.hasConstruction("0,0", "player")) return;
+    this.assignJobs();
+    // Reassign existing fields first. New works still require materials and a
+    // workforce; hunger cannot create an unlimited landscape of free farms.
+    if (this.hasPlayerConstruction()) return;
+    const snap = this.civSnapshot();
+    const workers = this.citizens().filter((person) => person.age >= 16 && person.age < 65).length;
+    if (snap.counts.farm + snap.counts.orchard + snap.counts.fishery >= workers) return;
     for (const id of ["fishery", "farm", "orchard"] as const) {
+      if (!this.canUseBuilding(id, snap) || !this.canSite(id)) continue;
       const site = this.findSite(id);
-      if (!site) continue;
-      if (this.placeBuilding(site, id, { owner: "player", free: true, silent: true })) {
-        this.setHint(`Hunger drove a new ${BUILDINGS[id].name.toLowerCase()} from the wild.`);
+      if (site && this.placeBuilding(site, id, { owner: "player", silent: true })) {
+        this.setHint(`The council funds a ${BUILDINGS[id].name.toLowerCase()} to address the food shortage.`);
         return;
       }
     }
@@ -2510,14 +2553,14 @@ export class Game {
   private resolveWarOutcome(war: WarState, aggSociety: Society | null, defSociety: Society | null): void {
     const addPractice = (society: Society | null, practiceName: string) => {
       const gp: import("./simulation/types.ts").GenerativePractice = {
-        id: `p-war-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `p-war-${war.aggressorId}-${war.defenderId}-${war.startYear}-${society?.islandId ?? "player"}-${practiceName}`,
         effects: { soil: 0, forest: 0, food: 0, water: 0, knowledge: 0.01, stability: 0.015 },
         name: practiceName,
         parentId: null,
         discoveredDay: this.simDays,
       };
       if (!society) {
-        if (!this.simulation.snapshot.culture.practices.some(p => p.name === practiceName)) (this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot).culture.practices.push(gp);
+        this.simulation.addPractice(gp);
       } else if (!society.culture.practices.some(p => p.name === practiceName)) {
         society.culture.practices.push(gp);
       }
@@ -2754,6 +2797,7 @@ export class Game {
     const drought = this.event === "drought" ? 0.35 : 1;
     const ashFarm = this.event === "ash" ? 0.7 : 1;
     const playerYield = { food: 0, gold: 0, wood: 0 };
+    const workedByRegion = new Map<string, Record<BuildingId, number>>();
     const societyYield = new Map<string, { food: number; gold: number; wood: number }>();
     let housing = 0;
     let happiness = 40;
@@ -2767,6 +2811,10 @@ export class Game {
         if (tile.building === "market") markets += 1;
       }
       const staff = this.staffFactor(tile);
+      const region = tile.owner === "tribe" ? tile.islandId : "player";
+      const worked = workedByRegion.get(region) ?? emptyCounts();
+      if (tile.ready && (tile.building === "hut" || staff > 0)) worked[tile.building]++;
+      workedByRegion.set(region, worked);
       if (staff <= 0) continue;
       const work = (staff * simDt) / YEAR_SECONDS;
       let foodGain = 0;
@@ -2905,6 +2953,7 @@ export class Game {
       housing,
       annualProduction,
       buildings: snap.counts,
+      workedBuildings: workedByRegion.get("player") ?? emptyCounts(),
       moodPressure: (happiness - 50) / 50 - (household?.migrationPressure ?? 0) * 0.12 + this.originProfile.moodPressure - (this.isMobilized("player") ? 0.15 : 0),
       infrastructure: this.playerInfrastructure(),
       disruption: this.spacecraftMode && this.hullIntegrity < 38 ? "storm" : disruption,
@@ -2920,7 +2969,7 @@ export class Game {
     if (simulated) this.applySimulationSnapshot(simulated);
 
     if (this.event === "migration" && !this.migrationResolved && this.food > 7 && folk.length < housing) {
-      const home = [...this.tiles.values()].find((tile) => tile.owner === "player" && tile.building === "hut" && tile.ready);
+      const home = this.settlementHome("player");
       if (home) {
         this.spawnOne(home, "villager");
         this.assignHomes();
@@ -2965,6 +3014,7 @@ export class Game {
           housing: tribeHousing,
           annualProduction: annual,
           buildings: counts,
+          workedBuildings: workedByRegion.get(society.islandId) ?? emptyCounts(),
           moodPressure: (tribeHappiness - 50) / 50 - (householdSignals.get(society.islandId)?.migrationPressure ?? 0) * 0.1 - (mobilized ? 0.15 : 0),
           infrastructure: this.tribeInfrastructure(society.islandId),
           disruption,
@@ -3001,19 +3051,21 @@ export class Game {
     if (this.regionalNetworkTimer >= SECONDS_PER_DAY * 0.5) {
       const networkYears = this.regionalNetworkTimer / YEAR_SECONDS;
       this.regionalNetworkTimer = 0;
+      this.assignJobs();
       this.exchangeBetweenRegions(networkYears);
     }
 
     this.growTimer += simDt;
-    if (this.growTimer > SECONDS_PER_DAY * 1.15) {
-      this.growTimer = 0;
+    if (this.growTimer >= YEAR_SECONDS) {
+      this.growTimer -= YEAR_SECONDS;
       this.tryBirths();
     }
 
     this.hungerTimer += simDt;
     if (this.hungerTimer > SECONDS_PER_DAY * 1.4) {
+      const years = this.hungerTimer / YEAR_SECONDS;
       this.hungerTimer = 0;
-      this.tryHunger();
+      this.tryHunger(years);
     }
 
     this.lifecycleTimer += simDt;
@@ -3189,18 +3241,11 @@ export class Game {
 
   private staffFactor(tile: Tile): number {
     if (!tile.building || tile.building === "hut" || tile.buildLeft > 0) return 0;
-    const outdoor =
-      tile.building === "farm" ||
-      tile.building === "orchard" ||
-      tile.building === "lumber" ||
-      tile.building === "fishery";
-    if (outdoor && isNight(hourFromDays(this.visualDays))) return 0;
     const workers = this.people.filter(
-      (person) => person.islandId === tile.islandId && person.workQ === tile.q && person.workR === tile.r,
+      (person) => person.age >= 16 && person.age < 65 && person.islandId === tile.islandId && person.workQ === tile.q && person.workR === tile.r,
     );
     if (workers.length === 0) return 0;
-    const present = workers.filter((person) => !person.sleeping && person.q === tile.q && person.r === tile.r).length;
-    let factor = 0.12 + 0.88 * (present / workers.length);
+    let factor = Math.min(1, workers.length / Math.max(1, BUILDINGS[tile.building].workers));
     const outbreak = tile.owner === "player"
       ? this.simulation.snapshot.diseaseOutbreak
       : this.lastRegionalSnapshots.get(tile.islandId)?.diseaseOutbreak ?? false;
@@ -3541,15 +3586,21 @@ export class Game {
     }
   }
 
+  private settlementHome(region: string): Tile | undefined {
+    const tribe = region !== "player";
+    const places = [...this.tiles.values()].filter((tile) => tile.owner === (tribe ? "tribe" : "player") && tile.ready && (!tribe || tile.islandId === region));
+    const foodWorks = new Map<string, number>();
+    for (const tile of places) if (tile.building && ["farm", "orchard", "fishery"].includes(tile.building)) foodWorks.set(tile.islandId, (foodWorks.get(tile.islandId) ?? 0) + 1);
+    const residents = this.peopleByRegion.get(region) ?? [];
+    const score = (tile: Tile) => (foodWorks.get(tile.islandId) ?? 0) * 8 / Math.max(1, residents.filter((person) => person.islandId === tile.islandId).length);
+    return places.filter((tile) => tile.building === "hut").sort((left, right) => score(right) - score(left))[0];
+  }
+
   private moveResident(originId: string, destinationId: string): boolean {
     const resident = [...(this.peopleByRegion.get(originId) ?? [])]
       .sort((left, right) => this.households.hardshipFor(right.id) - this.households.hardshipFor(left.id) || left.seed - right.seed)[0];
     const destinationTribe = destinationId !== "player";
-    const home = [...this.tiles.values()].find(
-      (tile) =>
-        tile.building === "hut" && tile.ready && tile.owner === (destinationTribe ? "tribe" : "player") &&
-        (!destinationTribe || tile.islandId === destinationId),
-    );
+    const home = this.settlementHome(destinationId);
     if (!resident || !home) return false;
     this.removeFromRegionIndex(resident);
     resident.tribe = destinationTribe;
@@ -3584,15 +3635,21 @@ export class Game {
   }
 
   private advanceAges(year: number): void {
-    for (const person of this.people) person.age += 1;
+    for (const person of this.people) {
+      person.age += 1;
+      const scale = 2.45 * (person.age < 16 ? 0.55 + 0.45 * person.age / 16 : 1);
+      person.mesh.scale.setScalar(scale);
+      for (const pop of this.popIns) if (pop.object === person.mesh) pop.target = scale;
+    }
     const deaths = computeDeaths(this.people, year, hash2);
     for (let i = deaths.length - 1; i >= 0; i--) {
       const person = this.people[deaths[i]!.personIndex];
       this.checkKnowledgeLoss(person);
       this.removeFromRegionIndex(person);
-      this.peopleGroup.remove(person.mesh);
+      this.disposePersonMesh(person.mesh);
       this.people.splice(deaths[i]!.personIndex, 1);
     }
+    this.assignJobs();
     if (deaths.length > 0) {
       this.assignHomes();
       this.assignJobs();
@@ -3781,7 +3838,7 @@ export class Game {
       const person = this.people[idx];
       if (person) {
         this.removeFromRegionIndex(person);
-        this.peopleGroup.remove(person.mesh);
+        this.disposePersonMesh(person.mesh);
         this.people.splice(idx, 1);
       }
     }
@@ -3801,56 +3858,45 @@ export class Game {
   }
 
   private tryBirths(): void {
-    const societies = new Map(
-      [...this.societies.values()].map(s => [s.islandId, {
-        islandId: s.islandId, name: s.name, food: s.food,
-        populationCount: this.regionPeople(s.islandId).length,
-        housing: this.housingOf("tribe", s.islandId),
-      }]),
-    );
-    const candidate = shouldBirth({
-      playerCitizenCount: this.citizens().length,
-      playerHousing: this.housingOf("player"),
-      food: this.food,
-      birthReadiness: this.simulation.snapshot.birthReadiness,
-      mortalityRisk: this.simulation.snapshot.mortalityRisk,
-      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
-      societies,
-    });
-    if (!candidate) return;
-    const owner = candidate.tribe ? "tribe" : "player";
-    const hut = [...this.tiles.values()].find(
-      (tile) => tile.building === "hut" && tile.owner === owner && tile.buildLeft <= 0 &&
-        (!candidate.tribe || tile.islandId === candidate.islandId),
-    );
-    if (!hut) return;
-    this.spawnOne(hut, candidate.role, 0, candidate.tribe, true);
-    this.assignHomes();
-    const name = this.people[this.people.length - 1]?.name ?? "A child";
-    this.setHint(candidate.tribe ? `${candidate.societyName} welcomed a new villager.` : `${name} came of age in the village.`);
+    const regions = ["player", ...this.societies.keys()];
+    for (const region of regions) {
+      const tribe = region !== "player";
+      const residents = tribe ? this.regionPeople(region) : this.citizens();
+      const society = this.societies.get(region);
+      const snapshot = tribe ? this.lastRegionalSnapshots.get(region) : this.simulation.snapshot;
+      const food = society?.food ?? this.food;
+      const readiness = Math.min(snapshot?.birthReadiness ?? 0.5, tribe ? 1 : this.householdMetrics?.birthReadiness ?? 0.5);
+      const result = annualBirths({
+        reproductiveAdults: residents.filter((person) => person.age >= 18 && person.age < 45).length,
+        population: residents.length, housing: this.housingOf(tribe ? "tribe" : "player", tribe ? region : undefined),
+        food, readiness, credit: this.birthCredits.get(region) ?? 0,
+      });
+      this.birthCredits.set(region, result.credit);
+      const parent = residents.find((person) => person.age >= 18 && person.age < 45);
+      const home = parent ? this.tiles.get(hexKey(parent.homeQ, parent.homeR)) : this.settlementHome(region);
+      if (!home) continue;
+      for (let index = 0; index < result.births; index++) {
+        this.spawnOne(home, "villager", index, tribe, true);
+        const name = this.people.at(-1)!.name;
+        this.setHint(`${name} was born in ${society?.name ?? "the village"}. Children depend on the working generation until age 16.`);
+      }
+      if (result.births) this.assignHomes();
+    }
   }
 
-  private tryHunger(): void {
-    const societies = new Map(
-      [...this.societies.values()].map(s => [s.islandId, {
-        islandId: s.islandId, name: s.name, food: s.food,
-        populationCount: this.regionPeople(s.islandId).length,
-        housing: this.housingOf("tribe", s.islandId),
-      }]),
-    );
-    const exile = shouldExileHungry({
-      playerCitizenCount: this.citizens().length,
-      playerHousing: this.housingOf("player"),
-      food: this.food,
-      birthReadiness: this.simulation.snapshot.birthReadiness,
-      mortalityRisk: this.simulation.snapshot.mortalityRisk,
-      householdBirthReadiness: this.householdMetrics?.birthReadiness ?? 0.5,
-      societies,
-    });
-    if (!exile) return;
-    const name = this.exileHungry(exile.tribe, exile.islandId);
-    if (!name) return;
-    this.setHint(exile.tribe ? `${name} of ${exile.societyName} was lost to hunger.` : `${name} left the village, driven by hardship.`);
+  private tryHunger(years: number): void {
+    for (const region of ["player", ...this.societies.keys()]) {
+      const tribe = region !== "player";
+      const population = tribe ? this.regionPeople(region).length : this.citizens().length;
+      const food = tribe ? this.societies.get(region)!.food : this.food;
+      const risk = (tribe ? this.lastRegionalSnapshots.get(region) : this.simulation.snapshot)?.mortalityRisk ?? 0;
+      const result = hardshipLosses({ population, food, risk, years, credit: this.hardshipCredits.get(region) ?? 0 });
+      this.hardshipCredits.set(region, result.credit);
+      for (let index = 0; index < result.losses; index++) {
+        const name = this.exileHungry(tribe, tribe ? region : undefined);
+        if (name) this.setHint(`${name} was lost during prolonged food shortages in ${this.societies.get(region)?.name ?? "the village"}.`);
+      }
+    }
   }
 
   private exileHungry(tribe: boolean, islandId?: string): string | null {
@@ -3865,7 +3911,7 @@ export class Game {
     const name = person.name;
     this.checkKnowledgeLoss(person);
     this.removeFromRegionIndex(person);
-    this.peopleGroup.remove(person.mesh);
+    this.disposePersonMesh(person.mesh);
     this.people.splice(this.people.indexOf(person), 1);
     this.assignJobs();
     return name;
@@ -4076,6 +4122,11 @@ export class Game {
   }
 
   private refreshHud(): void {
+    if (this.batchUpdating) return;
+    this.renderActivityLog();
+    const demographics = computeDemographics(this.citizens());
+    const generationReading = document.querySelector("#stat-generations");
+    if (generationReading) generationReading.textContent = `${demographics.children} children · ${demographics.adults} working age · ${demographics.elders} elders`;
     const hour = hourFromDays(this.visualDays);
     const clock = `${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.floor((hour % 1) * 60)).padStart(2, "0")}`;
     const snap = this.civSnapshot();
@@ -4159,19 +4210,23 @@ export class Game {
     if (this.citizens().length > 0 && this.food < 1) this.setHint("The village is hungry. Auto will try a farm or fishery.");
   }
 
-  private setHint(text: string): void {
-    this.hud.setHint(text);
-    if (this.activityLog.length > 0 && this.activityLog[0]!.message === text) return;
-    const kind = classifyChronicleEvent(text);
-    const year = yearFromDays(this.simDays);
-    this.activityLog.unshift({ message: text, kind, year, season: this.season });
-    this.activityLog.splice(8);
+  private renderActivityLog(): void {
     const feed = document.querySelector("#activity-feed");
     if (feed) {
       feed.innerHTML = this.activityLog
         .map((entry) => `<li class="feed-${entry.kind}"><span class="feed-time">Y${entry.year}</span> ${entry.message}</li>`)
         .join("");
     }
+  }
+
+  private setHint(text: string): void {
+    if (!this.batchUpdating) this.hud.setHint(text);
+    if (this.activityLog.length > 0 && this.activityLog[0]!.message === text) return;
+    const kind = classifyChronicleEvent(text);
+    const year = yearFromDays(this.simDays);
+    this.activityLog.unshift({ message: text, kind, year, season: this.season });
+    this.activityLog.splice(8);
+    if (!this.batchUpdating) this.renderActivityLog();
     this.chronicle.record(
       this.simDays,
       kind,
@@ -4323,6 +4378,8 @@ export class Game {
 
   private loop = (): void => {
     if (!this.running) return;
+    if (this.worldRun && performance.now() - this.lastRunRender < 500) { requestAnimationFrame(this.loop); return; }
+    this.lastRunRender = performance.now();
     const completed = this.simulation.drain();
     if (completed) {
       this.applySimulationSnapshot(completed);
@@ -4334,7 +4391,7 @@ export class Game {
     }
     const dt = Math.min(this.clock.getDelta(), 0.08);
     const time = this.clock.elapsedTime;
-    const simDt = this.speed === 0 ? 0 : dt * this.speed;
+    const simDt = this.speed === 0 || this.worldRun ? 0 : dt * this.speed;
 
     this.advanceObserverMove(dt);
     this.moveObserverWithArrows(dt);

@@ -109,7 +109,7 @@ export class CellularEcology {
     // harvesting pressure also extend lightly across its region. This avoids
     // a saturated single cell masking a real regional carrying-cost.
     const regionalFarmPressure = ((useCounts[LAND_USE.farm] ?? 0) + (useCounts[LAND_USE.orchard] ?? 0)) / length * 0.34 * (1 - stewardship * 0.24);
-    const regionalWoodPressure = (useCounts[LAND_USE.lumber] ?? 0) / length * 2.0 * (1 - stewardship * 0.32);
+    const regionalWoodPressure = (useCounts[LAND_USE.lumber] ?? 0) / length * (0.25 + (useCounts[LAND_USE.lumber] ?? 0) * 0.3) * (1 - stewardship * 0.32);
     const regionalFishPressure = (useCounts[LAND_USE.fishery] ?? 0) / length * 0.3 * (1 - stewardship * 0.2);
     const regionalMinePressure = (useCounts[LAND_USE.mine] ?? 0) / length * 0.24;
     const disaster = disruption === "drought" ? 0.11 : disruption === "flood" ? 0.07 : disruption === "wildfire" ? 0.16 : disruption === "ash" ? 0.05 : 0;
@@ -132,6 +132,14 @@ export class CellularEcology {
       }
     }
 
+    // Practices modify recovery within a bounded range. Adding many customs
+    // cannot create unlimited nutrients or permanently negate natural regrowth.
+    pSoil = Math.tanh(pSoil * 5) * 0.01;
+    pForest = Math.tanh(pForest * 5) * 0.01;
+    pFish = Math.tanh(pFish * 5) * 0.01;
+    pWater = Math.tanh(pWater * 5) * 0.01;
+    pDisease = Math.tanh(pDisease * 5) * 0.015;
+
     for (let step = 0; step < iterations; step += 1) {
       for (let i = 0; i < length; i += 1) {
         const neighbours = this.neighbourMean(i);
@@ -139,8 +147,8 @@ export class CellularEcology {
         const suitability = this.suitability[i];
         const localSettlement = this.settlement[i];
         const use = this.landUse[i] ?? 0;
-        const farmPressure = regionalFarmPressure + ((use === LAND_USE.farm || use === LAND_USE.orchard) ? (1 - stewardship * 0.24) : 0);
-        const woodPressure = regionalWoodPressure + (use === LAND_USE.lumber ? (1 - stewardship * 0.32) : 0);
+        const farmPressure = regionalFarmPressure + ((use === LAND_USE.farm || use === LAND_USE.orchard) ? 0.035 * (1 - stewardship * 0.24) : 0);
+        const woodPressure = regionalWoodPressure + (use === LAND_USE.lumber ? 0.06 * (1 - stewardship * 0.32) : 0);
         const fishPressure = regionalFishPressure + (use === LAND_USE.fishery ? (1 - stewardship * 0.2) : 0);
         const minePressure = regionalMinePressure + (use === LAND_USE.mine ? 1 : 0);
         const buildingHere = use === 0 ? 0 : Math.max(0, 0.25 + suitability * 1.6 - localSettlement * 0.04);
@@ -148,8 +156,8 @@ export class CellularEcology {
         const forestLogistic = this.forest[i] * (1 - this.forest[i]) * 4;
         const fishLogistic = this.fish[i] * (1 - this.fish[i]) * 4;
         const waterLogistic = this.water[i] * (1 - this.water[i]) * 4;
-        soilNext[i] = clamp(this.soil[i] + dt * ((0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 + pSoil) * soilLogistic - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
-        forestNext[i] = clamp(this.forest[i] + dt * ((0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 + pForest) * forestLogistic - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
+        soilNext[i] = clamp(this.soil[i] + dt * ((0.022 * neighbours.forest + 0.012 * suitability + stewardship * 0.012 + pSoil) * soilLogistic + Math.max(0, 0.8 - this.soil[i]) * 0.045 - farmPressure * (0.32 + suitability) - disaster * (1 - resilience * 0.28) - localSettlement * 0.018));
+        forestNext[i] = clamp(this.forest[i] + dt * ((0.03 * this.soil[i] * (1 - localSettlement) + 0.04 * (neighbours.forest - this.forest[i]) + stewardship * 0.009 + pForest) * forestLogistic + (use === 0 ? 0.006 * (1 - this.forest[i]) : 0) - woodPressure * 0.8 - (disruption === "wildfire" ? 0.24 * (1 - resilience * 0.3) : 0)));
         const fishPractice = pFish * (coast ? 1 : 0.5);
         fishNext[i] = clamp(this.fish[i] + dt * ((0.028 * coast + 0.018 * (neighbours.fish - this.fish[i]) + stewardship * 0.006 + fishPractice) * fishLogistic - fishPressure * (0.4 + coast * 0.7) + (disruption === "storm" ? 0.015 : 0)));
         waterNext[i] = clamp(this.water[i] + dt * (

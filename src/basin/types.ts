@@ -1,3 +1,4 @@
+import type { BasinParameters } from "./parameters.ts";
 export type Good = "food" | "timber" | "tools";
 export type Stocks = Record<Good, number>;
 export type Livelihood = "farmer" | "woodcutter" | "toolmaker";
@@ -64,6 +65,7 @@ export type BasinHistory = {
 };
 export type BasinState = {
   schema: "tiny-civilization.basin/v1";
+  parameters?: BasinParameters;
   seed: number;
   season: number;
   world: BasinWorld;
@@ -74,6 +76,7 @@ export type BasinState = {
   droughtUntil: number;
   events: BasinEvent[];
   history: BasinHistory[];
+  archive?: { stride: number; entries: BasinHistory[] };
   interventions: { season: number; action: BasinIntervention }[];
   nextEventId: number;
   nextShipmentId: number;

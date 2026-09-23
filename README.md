@@ -1,27 +1,27 @@
 # Tiny Civilization
 
-An observer-driven simulation of three communities sharing one river basin.
-Households farm, cut timber, make tools, trade, migrate, and react to changes in
-land and policy. You shape conditions, then watch the consequences emerge.
+An observer-driven civilization simulation. Start with a camp, farming village,
+city, or space habitat, set the council's priorities, and watch people build,
+raise children, trade, migrate, learn, and respond to changing land and weather.
 
 [![Check](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml/badge.svg)](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml)
 
-![Three settlements exchange food, timber, and tools across a shared river basin while the observer changes conditions and compares outcomes.](docs/basin-overview.svg)
+```mermaid
+flowchart LR
+    Entry["World setup & seed"] --> Game["Civilization app"]
+    Game --> People["People & labor"]
+    Game --> Land["Land & settlements"]
+    People --> Engine["Simulation engine"]
+    Land --> Engine
+    Policy["Council directives"] --> Game
+    Engine --> Outcomes["Resources · culture · diplomacy"]
+    Outcomes --> Game
+    Game --> View["3D world · controls · chronicle"]
+    Entry -. "?mode=basin" .-> Basin["Separate river-basin experiment"]
+```
 
-## What you can observe
-
-- A deterministic 48 × 36 basin with elevation, drainage, moisture, fertility,
-  forest cover, a continuous river, and terrain-aware trade routes.
-- Roughly one hundred persistent households with material stocks, coin,
-  livelihoods, wellbeing, hardship, and migration history.
-- Local and regional markets where food, timber, and tools move through paid
-  transactions and remain visible while in transit.
-- Councils that collect tax, purchase materials, maintain common works, and can
-  build bridges that shorten journeys and increase route capacity.
-- A causal chronicle, settlement ledgers, map layers, and seasonal trends for
-  food, population, wellbeing, trade, migration, prices, and forest cover.
-- Counterfactual comparison against the same seed at the same season with no
-  interventions.
+The default app couples visible people and settlements to the research engine.
+The basin experiment has its own households, economy, and save format.
 
 ## Run locally
 
@@ -32,16 +32,86 @@ npm install
 npm run dev
 ```
 
-Open the URL printed by Vite, usually <http://localhost:5173>. The app writes its
-generated seed into the URL. Sharing that URL reproduces the same initial basin.
+Open the URL printed by Vite, usually <http://localhost:5173>. Use **New world**
+to choose an origin, geography, starting stores, technology, and temperament.
+A fixed starting world can be opened with `?seed=91&origin=farmers&speed=0`.
+The seed reproduces initial conditions, not an evolved world or its interventions.
 
-Use a fixed seed directly:
+## Civilization mechanics
 
-```text
-http://localhost:5173/?seed=42
-```
+- People have actual ages. Children depend on the settlement until age 16;
+  working adults staff workplaces, and elders retire at 65. Births require
+  reproductive adults, food, and housing. New houses add room, not free adults.
+- Labor follows local needs and available workers on each island. Food shortages
+  shift workers toward food production; empty buildings do not produce goods.
+- Councils build according to population and resources. Housing makes room for
+  growth, while food production and specialist work compete for limited labor.
+- Food scarcity causes losses in proportion to population and elapsed time.
+  Aging, migration, neighboring societies, and settlement collapse change who
+  lives in the world. Collapsed neighbors are not automatically refounded.
+- Farming and extraction pressure the land. Fallow land and forests can recover;
+  cultural effects are bounded so accumulated customs cannot destroy or restore
+  an entire ecosystem instantly. Practices can be learned again after losses.
+- Existing institutions, diplomacy, cultural lineages, and innovation continue
+  alongside the economy and generations.
 
-## Explore the basin
+The model uses twelve simulation days per year. **+1 yr**, **+100 yr**, **+1000 yr**,
+and **Run … years** advance the coupled world in quarter-day steps, including
+people, buildings, and neighboring societies. **Stop run** interrupts at a step
+boundary; a later run continues from that point. The page must remain open.
+Rendering slows during long runs to leave time for the simulation.
+
+Written council directives change priorities, such as securing food or favoring
+trade. Very large written deep-time requests use a separate statistical
+projection with fixed settlement inputs; that projection does not simulate
+every person and building as the year controls do.
+
+**Export chronicle** downloads research records and settlement-engine checkpoints.
+It is not a complete save/load system for the visible world. Those checkpoints
+preserve engine random state, cellular ecology, and fractional time. The model
+version is `research-foundation-3`; ecological and demographic rules differ from
+older runs. This is a simplified exploratory model, not a calibrated historical
+prediction. Founding populations, household formation, and disease waves are
+abstracted rather than detailed demographic or epidemiological models.
+
+## Optional basin experiment
+
+The separate three-community river-basin economy remains available at
+`?mode=basin` (for example, <http://localhost:5173/?mode=basin&seed=42>).
+It focuses on household stocks, paid trade, transport, taxes, and public works.
+Its households keep fixed sizes, so use the default civilization for generations.
+The following controls and portable saves apply only to the basin experiment.
+
+### Basin setup and long runs
+
+The basin starts paused. In **Set up a basin**, choose the seed, households per
+settlement (12–100), starting food, crop yield, rainfall, and forest regrowth.
+Click **Apply settings & start** to create and run that world. Applying settings
+replaces the current world; download **Save** first if you want to keep it.
+The seed URL reproduces terrain; use a save file to share custom parameters
+and the evolved world together.
+
+Use **Run for … years** for a longer run (up to 100,000 years per request), or
+**Play** for continuous observation. Every season is simulated in small batches;
+**Pause** interrupts a long run at a season boundary, and another run continues
+from there. Comparisons also run in cancellable batches and use the same initial
+parameters. Runtime depends on the number of households and years requested.
+
+A browser checkpoint is written about every five seconds while progressing,
+on pause, on completion, and when leaving the page. On your next visit, choose
+**Resume browser checkpoint** in setup. There is one checkpoint per browser
+origin; starting another basin replaces it. **Save** and **Load** provide portable
+JSON copies. If browser storage is unavailable, the checkpoint status tells you
+to save manually. The simulation does not run while the page is closed or your
+device sleeps; background tabs may run more slowly.
+
+Select **Whole history** to see a bounded, progressively coarser overview of the
+entire run, or **Recent seasons** for detail. The overview samples observations,
+not averages, and can miss brief events. Older saves start building that overview
+when resumed. Households currently keep their original sizes: long runs model
+economic and ecological change, not births, deaths, or generations.
+
+### Basin controls
 
 | Area | What it shows | What you can change |
 | --- | --- | --- |
@@ -56,7 +126,9 @@ Use **Save** to download the complete basin as JSON. **Load** validates and
 restores households, cargo, ecology, public works, interventions, and history so
 the simulation can continue exactly.
 
-## How the simulation fits together
+### Basin model
+
+[Illustrated basin overview](docs/basin-overview.svg)
 
 ```mermaid
 flowchart LR
@@ -92,14 +164,14 @@ Each simulated season follows a fixed sequence:
    hardship.
 6. Record aggregate observations and causal events for the interface.
 
-## Reproducibility
+### Basin reproducibility
 
 The basin is deterministic for the same seed, actions, and step schedule. Save
 files contain the authoritative state and survive JSON serialization. The app
 retains the latest 160 seasonal observations, 120 causal events, and 80
-interventions.
+interventions, plus at most 512 long-term observations.
 
-The counterfactual comparison starts a fresh engine with the same seed and runs
+The counterfactual comparison starts a fresh engine with the same seed and parameters and runs
 it to the current season without interventions. It measures the combined effect
 of the changed history; it does not isolate one policy when several interventions
 were made.
@@ -108,43 +180,30 @@ were made.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Selects the basin by default and lazy-loads the earlier sandbox |
-| `src/basin/world.ts` | Terrain, drainage, settlement placement, and least-cost routes |
-| `src/basin/engine.ts` | Households, markets, ecology, trade, migration, public works, and saves |
-| `src/basin/view.ts` | Three.js terrain, routes, settlements, cargo, and map layers |
-| `src/basin/app.ts` | Observer interface, controls, comparison, trends, and file actions |
-| `src/simulation/` | Render-free research engine used by the earlier world-scale sandbox |
-| `src/game.ts` | Browser lifecycle for the earlier sandbox |
+| `src/main.ts` | Selects the default civilization or the optional basin |
+| `src/civilization-app.ts` and `src/civilization.html` | Set up the default app and its interface |
+| `src/game.ts` | Visible world, people, councils, settlements, and browser lifecycle |
+| `src/population.ts` | Births, aging mortality, and food-shortage losses |
+| `src/simulation/labor.ts` | Assigns available adults to actual workplaces |
+| `src/simulation/world-run.ts` | Cancellable advancement of the coupled world |
+| `src/simulation/` | Settlement ecology, culture, institutions, and research engine |
+| `src/basin/` | Separate household and river-basin experiment |
+| `docs/research/` | Design proposals, technical specs, and review notes |
+
+The [research document index](docs/research/README.md) distinguishes proposals
+from current behavior; use this README and the code for the running model.
 
 ## Development
 
 ```bash
-npm test         # deterministic engine and reliability tests
+npm test         # engine, civilization, and reliability tests
 npm run build    # TypeScript checks and production bundle
 npm run check    # complete test and build gate used by CI
-npm run research # legacy-model branches, ensembles, and coupling ablations
+npm run research # settlement-model branches, ensembles, and coupling ablations
 npm run preview  # serve the production build locally
 ```
 
 The production build is written to `dist/`. CI runs `npm ci` followed by
-`npm run check` for pushes and pull requests.
-
-## Earlier sandbox and research model
-
-Open `?mode=legacy` to use the earlier world-scale sandbox. It includes
-configurable origins and geographies, written council directives, deep-time
-projection, cultural lineages, institutions, diplomacy, and a broader Three.js
-world view.
-
-Legacy research checkpoints preserve random-generator state, cellular ecology,
-and fractional time. Model version `research-foundation-2` differs from older
-checkpoints. Its long-horizon balance diagnostic still reports six unmet food
-and disease expectations, so both engines should be treated as exploratory
-models rather than calibrated historical or economic predictions.
-
-## Next directions
-
-- Add browser-level interaction, accessibility, and responsive-layout tests.
-- Model upstream water use, shared reserves, route disruption, and agreements.
-- Add intervention-by-intervention counterfactual attribution.
-- Reduce the initial Three.js bundle if load performance becomes limiting.
+`npm run check` for pushes and pull requests. The supplementary balance scenarios
+can be run with `node --experimental-strip-types src/simulation/balance-test.ts`;
+they are diagnostics, not evidence of historical calibration.

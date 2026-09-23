@@ -1,6 +1,6 @@
 import type { LandKind } from "./world";
-import { BUILDINGS, type BuildingId } from "./buildings";
-import { priorityBuildings, type Directive } from "./directive";
+import { BUILDINGS, type BuildingId } from "./buildings.ts";
+import { priorityBuildings, type Directive } from "./directive.ts";
 
 export type CivCounts = Record<BuildingId, number>;
 
@@ -43,8 +43,17 @@ export function chooseNextBuilding(
   const pick = (ids: BuildingId[]): BuildingId | null => {
     for (const id of ids) {
       const def = BUILDINGS[id];
-      if (!canBuild(id)) continue;
+      // Councils only commission capacity residents can use. A cultural preference
+      // changes ordering, but does not justify endless empty housing or workshops.
+      if (id === "hut" && housing >= people + Math.max(2, Math.ceil(people * 0.25))) continue;
+      const target: Partial<Record<BuildingId, number>> = {
+        farm: Math.ceil(people / 3), fishery: Math.ceil(people / 4), orchard: Math.ceil(people / 5),
+        lumber: Math.max(1, Math.ceil(people / 8)), market: Math.max(1, Math.ceil(people / 10)),
+        shrine: Math.max(1, Math.ceil(people / 16)), mine: Math.max(1, Math.ceil(people / 12)), forge: Math.max(1, Math.ceil(people / 16)),
+      };
+      if (id !== "hut" && counts[id] >= (target[id] ?? 1)) continue;
       if (gold < def.goldCost || wood < def.woodCost) continue;
+      if (!canBuild(id)) continue;
       return id;
     }
     return null;
@@ -67,7 +76,7 @@ export function chooseNextBuilding(
     const id = pick(["lumber", "orchard"]);
     if (id) return id;
   }
-  if (people >= housing + 1 && !hungry) {
+  if (people >= housing - 1 && !hungry) {
     const id = pick(["hut"]);
     if (id) return id;
   }

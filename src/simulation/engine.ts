@@ -6,7 +6,7 @@ import { createCulture, evolvePracticesAndLanguage } from "./culture.ts";
 import { ClimateSystem } from "./climate.ts";
 import { evolveInstitutions, institutionEffects } from "./institutions.ts";
 import { evolveInnovations, innovationEffects } from "./innovation.ts";
-import type { Demographics, Ecology, OriginCrisis, SimulationInputs, SimulationSnapshot, Stores } from "./types.ts";
+import type { Demographics, Ecology, GenerativePractice, OriginCrisis, SimulationInputs, SimulationSnapshot, Stores } from "./types.ts";
 
 const DAYS_PER_YEAR = 12;
 const LOCAL_STEP_DAYS = 1 / 8;
@@ -86,6 +86,11 @@ export class SimulationEngine {
     this.state.stores = { ...stores };
   }
 
+  addPractice(practice: GenerativePractice): void {
+    if (this.state.culture.practices.some((existing) => existing.name === practice.name)) return;
+    this.state.culture.practices.push(structuredClone(practice));
+  }
+
   loadCheckpoint(snapshot: SimulationSnapshot): void {
     if (!snapshot.continuation) throw new Error("Cannot continue a lightweight simulation snapshot; use a portable checkpoint.");
     this.state = structuredClone(snapshot);
@@ -127,7 +132,7 @@ export class SimulationEngine {
     const innovationRules = innovationEffects(this.state.innovations);
     const recoveryYears = Math.min(span, 80);
     const climate = this.climate.advance(span * DAYS_PER_YEAR);
-    this.updateEcology(inputs.buildings, inputs.disruption, recoveryYears * DAYS_PER_YEAR, climate, inputs.diseaseImport ?? 0);
+    this.updateEcology(inputs.workedBuildings ?? inputs.buildings, inputs.disruption, recoveryYears * DAYS_PER_YEAR, climate, inputs.diseaseImport ?? 0);
     this.updateBioculturalDiversity();
     const foodNeed = inputs.population * 1.5;
     const crisisRules = this.crisisRules();
@@ -234,7 +239,7 @@ export class SimulationEngine {
     this.state.mortalityRisk = clamp01((0.42 - this.state.health) * 2.2 + (1 - foodSecurity) * 0.55 + disaster * 1.6 + diseaseBurden * 0.8);
 
     this.state.seasonalStress = clamp01(this.state.seasonalStress + (disaster * 0.5 + (1 - foodSecurity) * 0.08 - 0.035) * stepDays);
-    this.updateEcology(inputs.buildings, inputs.disruption, stepDays, climate, inputs.diseaseImport ?? 0);
+    this.updateEcology(inputs.workedBuildings ?? inputs.buildings, inputs.disruption, stepDays, climate, inputs.diseaseImport ?? 0);
     this.state.diseaseOutbreak = this.state.ecology.disease > 0.55;
     this.updateBioculturalDiversity();
     this.state.climate = climate;
@@ -390,7 +395,11 @@ export class SimulationEngine {
       this.state.stability = clamp01(this.state.stability - this.state.pandemic.virulence * 0.006 * yearPart);
       const minDurationYears = 2;
       const elapsed = currentYear - this.state.pandemic.startYear;
-      if (this.state.ecology.disease < 0.3 && elapsed >= minDurationYears) {
+      // Environmental disease pressure can remain endemic. An acute outbreak
+      // still wanes as its susceptible population shrinks; it must not remain
+      // the same pandemic for centuries waiting for the land to become clean.
+      const waveDuration = 2 + Math.ceil(this.state.pandemic.virulence * 8 + this.state.pandemic.transmissibility * 4);
+      if (elapsed >= minDurationYears && (this.state.ecology.disease < 0.3 || elapsed >= waveDuration)) {
         this.state.pandemic.resolved = true;
         this.lastPandemicYear = currentYear;
         if (!this.state.culture.practices.some(p => p.name.includes("plague"))) {
@@ -534,14 +543,17 @@ export class SimulationEngine {
     const ecology = this.state.ecology;
     const effectToEco: Record<string, keyof Ecology> = { soil: "soil", forest: "forest", water: "water", food: "soil" };
     const vuln = this.state.practiceVulnerability;
+    // Lost practices are no longer in the active list, but their cooldowns
+    // must still expire or each loss permanently removes an innovation slot.
+    for (const [id, cooldown] of Object.entries(vuln)) {
+      if (cooldown >= 0) continue;
+      vuln[id] += yearPart;
+      if (vuln[id] >= 0) delete vuln[id];
+    }
 
     for (const practice of this.state.culture.practices) {
       const pid = practice.id;
-      if (vuln[pid] !== undefined && vuln[pid] < 0) {
-        vuln[pid] += yearPart;
-        if (vuln[pid] >= 0) delete vuln[pid];
-        continue;
-      }
+      if (vuln[pid] !== undefined && vuln[pid] < 0) continue;
       let dominantField: keyof Ecology = "soil";
       let dominantVal = -Infinity;
       for (const key of Object.keys(effectToEco) as (keyof typeof effectToEco)[]) {

@@ -14,7 +14,7 @@
           <span id="stat-wood" class="resource">Wood 16</span>
           <span id="stat-mood" class="resource">Mood 52</span>
           <span id="stat-health" class="resource">Health 100</span>
-          <span id="stat-people">People 0</span>
+          <span id="stat-people">People 0</span><span id="stat-generations"></span>
           <span id="stat-tech">Tech 1</span>
           <span id="stat-evolution">Foundational</span>
           <span id="stat-land" class="resource">Land 100</span>
@@ -43,7 +43,7 @@
         <section class="council" aria-label="Council directives">
           <div class="council-title">Propose a change</div>
           <p id="council-order" class="council-order">The council is keeping the settlement balanced.</p>
-          <form id="directive-form"><input id="directive-input" aria-label="Possible change for the council" placeholder="e.g. secure food; years pace; show 1 million years" /><button type="submit">Propose change</button></form>
+          <form id="directive-form"><input id="directive-input" aria-label="Possible change for the council" placeholder="e.g. secure food; favor trade; protect forests" /><button type="submit">Propose change</button></form>
         </section>
         <label class="observer-pace">Timeline
           <select id="speed-selector" aria-label="Simulation speed">
@@ -56,6 +56,7 @@
           </select>
         </label>
         <div class="time-advance" aria-label="Time advance controls"><span>Advance</span><button type="button" data-advance="1" class="century-step">+1 yr</button><button type="button" data-advance="100" class="century-step">+100 yr</button><button type="button" data-advance="1000" class="century-step">+1000 yr</button></div>
+        <form id="world-run-form" class="world-run-form"><label>Run <input id="world-run-years" type="number" min="1" max="10000" step="1" value="100" required aria-label="Years to simulate" /> years</label><button id="run-world" type="submit">Simulate</button><button id="stop-world-run" type="button" disabled>Stop run</button><span id="world-run-status" role="status">Every generation, building, and settlement advances. Runs need this page to stay open.</span></form>
       </footer>
     </div>
     <dialog id="setup" class="setup" aria-labelledby="setup-title">
@@ -66,7 +67,7 @@
         <input type="hidden" name="archetype" value="continental" />
         <input type="hidden" name="goal" value="prosper" />
         <section class="setup-section" aria-labelledby="origin-label"><div class="setup-label" id="origin-label">Where do we begin?</div><div class="story-grid">
-          <button type="button" class="story-card camp is-selected" data-choice="origin" data-value="camp" aria-pressed="true"><strong>Frontier camp</strong><span>Five people, rough tools, room to adapt.</span></button>
+          <button type="button" class="story-card camp is-selected" data-choice="origin" data-value="camp" aria-pressed="true"><strong>Frontier camp</strong><span>Founding families, rough tools, room to adapt.</span></button>
           <button type="button" class="story-card farmers" data-choice="origin" data-value="farmers" aria-pressed="false"><strong>Farmers’ village</strong><span>Full granaries, rooted customs, fertile pressure.</span></button>
           <button type="button" class="story-card city" data-choice="origin" data-value="city" aria-pressed="false"><strong>Established city</strong><span>Wealth and institutions—plus expectations.</span></button>
           <button type="button" class="story-card spacecraft" data-choice="origin" data-value="spacecraft" aria-pressed="false"><strong>Deep-space habitat</strong><span>A sealed ecology, finite hull, research future.</span></button>

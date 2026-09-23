@@ -155,6 +155,7 @@ class TestWorker {
       if (request.type === "advance") this.engine.advance(request.inputs);
       else this.engine.advanceYears(request.inputs, request.years);
     }
+    if (request.type === "add-practice") this.engine.addPractice(request.practice);
     if (request.type === "advance-regions") {
       this.onmessage?.({ data: { type: "region-snapshots", snapshots: request.regions.map((region) => ({ id: region.id, snapshot: this.engine.checkpoint })) } });
     } else this.onmessage?.({ data: { type: "snapshot", snapshot: this.engine.checkpoint } });
@@ -186,6 +187,30 @@ test("worker results can be delivered while paused, and a crash replays only out
   assert.deepEqual(client.drain(), expected.checkpoint);
 });
 
+test("an externally granted practice survives worker updates and crash recovery", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  const practice = {
+    id: "p-war-a-b-1-player-peace-charter", name: "peace-charter", parentId: null,
+    discoveredDay: 12, effects: { soil: 0, forest: 0, food: 0, water: 0, knowledge: 0.01, stability: 0.015 },
+  };
+  client.addPractice(practice);
+  worker.deliver();
+  assert.ok(client.drain()?.culture.practices.some((entry) => entry.id === practice.id));
+  client.advance(inputs);
+  worker.deliver();
+  assert.ok(client.drain()?.culture.practices.some((entry) => entry.id === practice.id));
+
+  const queued = { ...practice, id: "p-war-a-b-2-player-war-weariness", name: "war-weariness" };
+  client.addPractice(queued);
+  worker.onerror?.({ preventDefault() {} });
+  const recovered = client.drain()!;
+  assert.ok(recovered.culture.practices.some((entry) => entry.id === queued.id));
+  assert.ok(client.advance(inputs)?.culture.practices.some((entry) => entry.id === queued.id));
+});
+
 test("regional response batches merge and retired regions cannot reappear", (t) => {
   mockWorker(t, TestWorker);
   const client = new SimulationClient(42, stores, 0);
@@ -201,4 +226,45 @@ test("worker construction failure starts a functional synchronous simulation", (
   mockWorker(t, class { constructor() { throw new Error("blocked"); } });
   const client = new SimulationClient(42, stores, 0);
   assert.equal(client.advance(inputs)?.elapsedDays, 1);
+});
+
+test("switching to coupled world stepping preserves completed, queued, and fractional work", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  client.advance(inputs); worker.deliver();
+  const acknowledged = client.drain()!;
+  client.setStores(acknowledged.stores);
+  client.advance(inputs);
+  client.advance({ ...inputs, deltaDays: 0.125 });
+  const expected = new SimulationEngine(42, stores);
+  expected.loadCheckpoint(acknowledged);
+  expected.advance(inputs);
+  assert.deepEqual(client.useSynchronous(), expected.checkpoint);
+  assert.equal(worker.terminated, true);
+  client.setStores(expected.snapshot.stores);
+  expected.advance({ ...inputs, deltaDays: 0.25 });
+  assert.deepEqual(client.advance({ ...inputs, deltaDays: 0.125 }), expected.checkpoint);
+});
+
+test("lost cultural practices release their discovery slots after the cooldown", () => {
+  const engine = new SimulationEngine(200, stores);
+  const checkpoint = engine.checkpoint;
+  checkpoint.practiceVulnerability = Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`lost-${index}`, -2]));
+  engine.loadCheckpoint(checkpoint);
+  engine.advanceYears(inputs, 3);
+  assert.ok(Object.keys(engine.snapshot.practiceVulnerability).every(id => !id.startsWith('lost-')));
+  for (let year = 0; year < 200; year++) engine.advanceYears(inputs, 1);
+  assert.ok(engine.snapshot.culture.practices.length > 0, 'societies can discover again after losing a generation of practices');
+});
+
+test("an acute pandemic resolves even when environmental disease remains endemic", () => {
+  const engine = new SimulationEngine(256, stores);
+  const checkpoint = engine.checkpoint;
+  checkpoint.pandemic = { id: 0, startYear: 0, virulence: 0.4, transmissibility: 0.4, originRegion: "local", affectedRegions: ["local"], resolved: false };
+  engine.loadCheckpoint(checkpoint);
+  for (let year = 0; year < 12; year++) engine.advanceYears({ ...inputs, population: 20, diseaseImport: 0.8 }, 1);
+  assert.ok(!engine.snapshot.pandemic || engine.snapshot.pandemic.resolved);
+  assert.ok(engine.snapshot.culture.practices.some(practice => practice.name.includes("plague")));
 });
