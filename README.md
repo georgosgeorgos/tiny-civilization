@@ -54,6 +54,16 @@ trade. Very large written deep-time requests use a separate statistical
 projection with fixed settlement inputs; that projection does not simulate
 every person and building as the year controls do.
 
+For optional AI interpretation of council proposals, expand **AI council
+interpreter** and enter your own [OpenRouter API key](https://openrouter.ai/keys).
+The default model is [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash)
+(`deepseek/deepseek-v4.1-flash`); its model ID can be changed in the panel.
+The app sends the proposal and a small summary of the current settlement
+directly to OpenRouter, then maps the response to existing council priorities.
+The app does not save the key to browser storage or exported files; clear the
+field to stop using it. OpenRouter usage may incur charges. Leave the key
+blank to use the local, offline directive rules.
+
 **Export chronicle** downloads research records and settlement-engine checkpoints.
 It is not a complete save/load system for the visible world. Those checkpoints
 preserve engine random state, cellular ecology, and fractional time. The model
