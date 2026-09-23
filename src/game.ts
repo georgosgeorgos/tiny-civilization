@@ -55,6 +55,7 @@ import { developmentStage, isUnlocked, specialtyFor } from "./civilization";
 import { goalCopy, type SimulationConfig } from "./config";
 import { createCosmicSystem, type CosmicSystem } from "./cosmos";
 import { DIRECTIVE_COPY, directivesFromText, speedFromText, yearsFromText, type Directive } from "./directive";
+import { DEFAULT_OPENROUTER_MODEL, interpretCouncilInstruction } from "./openrouter.ts";
 import { institutionEffects } from "./simulation/institutions.ts";
 import { innovationEffects } from "./simulation/innovation.ts";
 import { SimulationClient } from "./simulation/client.ts";
@@ -763,21 +764,7 @@ export class Game {
   private bindUi(): void {
     document.querySelector<HTMLFormElement>("#directive-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const input = document.querySelector<HTMLInputElement>("#directive-input");
-      const text = input?.value ?? "";
-      const years = yearsFromText(text);
-      if (years !== null) this.advanceDeepTime(years);
-      const pace = speedFromText(text);
-      if (pace !== null) this.setObserverSpeed(pace);
-      const directives = directivesFromText(text);
-      const directive = directives[0];
-      if (directive) {
-        this.directiveQueue = directives.slice(1);
-        this.setDirective(directive, text);
-      } else if (pace === null) {
-        this.setHint("Try asking for food, growth, trade, culture, frontier, balance, or a time pace.");
-      }
-      if (input) input.value = "";
+      void this.submitCouncilInstruction();
     });
     document.querySelectorAll<HTMLButtonElement>("[data-zoom]").forEach((button) => {
       button.addEventListener("click", () => this.setZoom(Number(button.dataset.zoom)));
@@ -1556,6 +1543,61 @@ export class Game {
     const order = document.querySelector("#council-order");
     if (order) order.textContent = instruction?.trim() ? `Council order: “${instruction.trim()}”` : DIRECTIVE_COPY[directive];
     this.setHint(`Council directive: ${DIRECTIVE_COPY[directive]}`);
+  }
+
+  private async submitCouncilInstruction(): Promise<void> {
+    const input = document.querySelector<HTMLInputElement>("#directive-input");
+    const button = document.querySelector<HTMLButtonElement>("#directive-form button[type=submit]");
+    const status = document.querySelector<HTMLElement>("#openrouter-status");
+    const text = input?.value.trim() ?? "";
+    if (!text || button?.disabled) return;
+    const years = yearsFromText(text);
+    const pace = speedFromText(text);
+
+    const localDirectives = directivesFromText(text);
+    let directives = localDirectives;
+    const apiKey = document.querySelector<HTMLInputElement>("#openrouter-key")?.value.trim() ?? "";
+    const useOpenRouter = apiKey && (localDirectives.length > 0 || (years === null && pace === null));
+    if (useOpenRouter) {
+      const model = document.querySelector<HTMLInputElement>("#openrouter-model")?.value.trim() || DEFAULT_OPENROUTER_MODEL;
+      const snap = this.civSnapshot();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20_000);
+      if (input) input.disabled = true;
+      if (button) button.disabled = true;
+      if (status) status.textContent = `Asking ${model} to interpret the council proposal…`;
+      try {
+        const interpretation = await interpretCouncilInstruction(text, {
+          year: yearFromDays(this.simDays), people: snap.people, housing: snap.housing,
+          food: snap.food, wood: snap.wood, gold: snap.gold, mood: snap.mood,
+        }, apiKey, model, fetch, controller.signal);
+        if ((window as unknown as { game: Game }).game !== this) return;
+        directives = interpretation.directives.length > 0 ? interpretation.directives : localDirectives;
+        if (status) status.textContent = interpretation.directives.length === 0 && localDirectives.length > 0
+          ? "The model found no priority; using local rules."
+          : interpretation.explanation || `Model selected ${directives.join(" → ") || "no council priority"}.`;
+      } catch (error) {
+        const reason = controller.signal.aborted ? "OpenRouter timed out." : error instanceof Error ? error.message : "OpenRouter is unavailable.";
+        if (status) status.textContent = `${reason} ${localDirectives.length ? "Using local rules." : "Try again or remove the key for local rules."}`;
+      } finally {
+        window.clearTimeout(timeout);
+        if (input) input.disabled = false;
+        if (button) button.disabled = false;
+      }
+    } else if (status) status.textContent = "";
+
+    if (years !== null) this.advanceDeepTime(years);
+    if (pace !== null) this.setObserverSpeed(pace);
+    const directive = directives[0];
+    if (directive) {
+      this.directiveQueue = directives.slice(1);
+      this.setDirective(directive, text);
+      if (input) input.value = "";
+    } else if (years !== null || pace !== null) {
+      if (input) input.value = "";
+    } else {
+      this.setHint("Try asking for food, growth, trade, culture, frontier, balance, or a time pace.");
+    }
   }
 
   private setZoom(distance: number): void {

@@ -43,7 +43,9 @@
         <section class="council" aria-label="Council directives">
           <div class="council-title">Propose a change</div>
           <p id="council-order" class="council-order">The council is keeping the settlement balanced.</p>
-          <form id="directive-form"><input id="directive-input" aria-label="Possible change for the council" placeholder="e.g. secure food; favor trade; protect forests" /><button type="submit">Propose change</button></form>
+          <form id="directive-form"><input id="directive-input" aria-label="Possible change for the council" maxlength="400" placeholder="e.g. secure food; favor trade; protect forests" /><button type="submit">Propose change</button></form>
+          <details class="openrouter-settings"><summary>AI council interpreter · optional</summary><div class="openrouter-fields"><label>OpenRouter API key<input id="openrouter-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key for this visit" /></label><label>Model ID<input id="openrouter-model" type="text" autocomplete="off" spellcheck="false" value="deepseek/deepseek-v4.1-flash" /></label><small>With a key, council proposals are sent to OpenRouter. The app does not save your key; clear this field to stop using it. API charges may apply. Without a key, local rules still work.</small></div></details>
+          <p id="openrouter-status" class="openrouter-status" role="status" aria-live="polite"></p>
         </section>
         <label class="observer-pace">Timeline
           <select id="speed-selector" aria-label="Simulation speed">
