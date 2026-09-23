@@ -6,19 +6,7 @@ raise children, trade, migrate, learn, and respond to changing land and weather.
 
 [![Check](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml/badge.svg)](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml)
 
-```mermaid
-flowchart LR
-    Entry["World setup & seed"] --> Game["Civilization app"]
-    Game --> People["People & labor"]
-    Game --> Land["Land & settlements"]
-    People --> Engine["Simulation engine"]
-    Land --> Engine
-    Policy["Council directives"] --> Game
-    Engine --> Outcomes["Resources · culture · diplomacy"]
-    Outcomes --> Game
-    Game --> View["3D world · controls · chronicle"]
-    Entry -. "?mode=basin" .-> Basin["Separate river-basin experiment"]
-```
+![Illustrated overview of how setup, a living world, the simulation engine, and council directives form a feedback loop](docs/civilization-overview.svg)
 
 The default app couples visible people and settlements to the research engine.
 The basin experiment has its own households, economy, and save format.
@@ -128,31 +116,7 @@ the simulation can continue exactly.
 
 ### Basin model
 
-[Illustrated basin overview](docs/basin-overview.svg)
-
-```mermaid
-flowchart LR
-    Seed["Seed"] --> World["Basin world"]
-    World --> Land["Land & water"]
-    Land --> Work["Household production"]
-    Work --> Local["Local markets"]
-    Local --> Trade["Regional trade"]
-    Trade --> Cargo["Shipments in transit"]
-    Cargo --> Homes["Household stores"]
-    Homes --> Welfare["Wellbeing & hardship"]
-    Welfare --> Migration["Migration & livelihoods"]
-    Migration --> Work
-
-    Policy["Drought · tax · bridge"] --> Engine["Basin engine"]
-    Engine --> Land
-    Engine --> Local
-    Engine --> History["Events & trends"]
-    History --> Observer["Map · ledger · chronicle"]
-
-    Engine <--> Save["Validated JSON save"]
-    Counterfactual["Same seed · no changes"] --> Compare["Counterfactual comparison"]
-    Observer --> Compare
-```
+![Illustrated river basin showing three trading settlements, seasonal feedback, observer controls, and comparisons](docs/basin-overview.svg)
 
 Each simulated season follows a fixed sequence:
 
