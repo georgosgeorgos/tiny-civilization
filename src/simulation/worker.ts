@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { SimulationEngine } from "./engine.ts";
 import type { SimulationRequest, SimulationResponse } from "./protocol.ts";
+import { addStores } from "./stores.ts";
 
 let engine: SimulationEngine | null = null;
 const regions = new Map<string, SimulationEngine>();
@@ -16,10 +17,10 @@ self.onmessage = (event: MessageEvent<SimulationRequest>) => {
   if (message.type === "init") {
     engine = new SimulationEngine(message.seed, message.stores, message.knowledge);
   } else if (message.type === "advance" && engine) {
-    engine.setStores(message.stores);
+    engine.setStores(addStores(engine.snapshot.stores, message.storeChange));
     engine.advance(message.inputs);
   } else if (message.type === "advance-years" && engine) {
-    engine.setStores(message.stores);
+    engine.setStores(addStores(engine.snapshot.stores, message.storeChange));
     engine.advanceYears(message.inputs, message.years);
   } else if (message.type === "add-practice" && engine) {
     engine.addPractice(message.practice);
@@ -29,8 +30,9 @@ self.onmessage = (event: MessageEvent<SimulationRequest>) => {
       if (!regional) {
         regional = new SimulationEngine(seedFor(region.id, message.seed), region.stores, region.knowledge);
         regions.set(region.id, regional);
+      } else {
+        regional.setStores(addStores(regional.snapshot.stores, region.storeChange));
       }
-      regional.setStores(region.stores);
       regional.advance(region.inputs);
       return { id: region.id, snapshot: regional.checkpoint };
     });

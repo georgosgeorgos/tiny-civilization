@@ -9,6 +9,7 @@ import { runExperiment, branchExperiment } from "./experiment.ts";
 import { createWorldManifest } from "./manifest.ts";
 import type { SimulationInputs } from "./types.ts";
 import type { SimulationRequest, SimulationResponse } from "./protocol.ts";
+import { addStores } from "./stores.ts";
 
 const stores = { food: 40, wood: 20, gold: 20 };
 const inputs: SimulationInputs = {
@@ -144,6 +145,7 @@ class TestWorker {
   requests: SimulationRequest[] = [];
   terminated = false;
   engine!: SimulationEngine;
+  regionalEngines = new Map<string, SimulationEngine>();
   constructor() { TestWorker.latest = this; }
   postMessage(request: SimulationRequest) { this.requests.push(structuredClone(request)); }
   terminate() { this.terminated = true; }
@@ -151,13 +153,26 @@ class TestWorker {
     const request = this.requests.shift()!;
     if (request.type === "init") this.engine = new SimulationEngine(request.seed, request.stores, request.knowledge);
     if (request.type === "advance" || request.type === "advance-years") {
-      this.engine.setStores(request.stores);
+      this.engine.setStores(addStores(this.engine.snapshot.stores, request.storeChange));
       if (request.type === "advance") this.engine.advance(request.inputs);
       else this.engine.advanceYears(request.inputs, request.years);
     }
     if (request.type === "add-practice") this.engine.addPractice(request.practice);
     if (request.type === "advance-regions") {
-      this.onmessage?.({ data: { type: "region-snapshots", snapshots: request.regions.map((region) => ({ id: region.id, snapshot: this.engine.checkpoint })) } });
+      const snapshots = request.regions.map((region) => {
+        let engine = this.regionalEngines.get(region.id);
+        if (!engine) {
+          let seed = request.seed | 0;
+          for (let i = 0; i < region.id.length; i += 1) seed = Math.imul(seed ^ region.id.charCodeAt(i), 0x45d9f3b);
+          engine = new SimulationEngine(seed >>> 0, region.stores, region.knowledge);
+          this.regionalEngines.set(region.id, engine);
+        } else engine.setStores(addStores(engine.snapshot.stores, region.storeChange));
+        engine.advance(region.inputs);
+        return { id: region.id, snapshot: engine.checkpoint };
+      });
+      this.onmessage?.({ data: { type: "region-snapshots", snapshots } });
+    } else if (request.type === "retire-region") {
+      this.regionalEngines.delete(request.id);
     } else this.onmessage?.({ data: { type: "snapshot", snapshot: this.engine.checkpoint } });
   }
 }
@@ -185,6 +200,99 @@ test("worker results can be delivered while paused, and a crash replays only out
   worker.onerror?.({ preventDefault() {} });
   assert.equal(worker.terminated, true);
   assert.deepEqual(client.drain(), expected.checkpoint);
+});
+
+test("queued worker advances preserve production and an intervening purchase", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  client.drain();
+
+  client.advance(inputs);
+  client.advance(inputs);
+  const expected = new SimulationEngine(42, stores);
+  expected.advance(inputs);
+  expected.advance(inputs);
+  worker.deliver(); worker.deliver();
+  assert.deepEqual(client.drain(), expected.checkpoint);
+
+  client.setStores({ ...expected.snapshot.stores, wood: expected.snapshot.stores.wood - 3 });
+  client.advance(inputs);
+  client.advance(inputs);
+  expected.setStores({ ...expected.snapshot.stores, wood: expected.snapshot.stores.wood - 3 });
+  expected.advance(inputs);
+  expected.advance(inputs);
+  worker.deliver(); worker.deliver();
+  assert.deepEqual(client.drain(), expected.checkpoint);
+});
+
+test("a purchase made before a worker reply remains visible while paused", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  client.drain();
+  client.advance(inputs);
+  const purchased = { ...stores, wood: stores.wood - 3 };
+  client.setStores(purchased);
+  worker.deliver();
+  const first = client.drain()!;
+  const expected = new SimulationEngine(42, stores);
+  expected.advance(inputs);
+  assert.equal(first.stores.wood, expected.snapshot.stores.wood - 3);
+  assert.equal(client.snapshot.stores.wood, first.stores.wood);
+
+  client.advance(inputs);
+  expected.setStores({ ...expected.snapshot.stores, wood: expected.snapshot.stores.wood - 3 });
+  expected.advance(inputs);
+  worker.deliver();
+  assert.deepEqual(client.drain(), expected.checkpoint);
+});
+
+test("queued regional advances preserve production and an intervening trade", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  const region = { id: "island", stores, knowledge: 0, inputs };
+  client.advanceRegions([region]);
+  client.advanceRegions([region]);
+  worker.deliver(); worker.deliver();
+  const produced = client.getRegionSnapshot("island")!;
+  let seed = 42;
+  for (const character of region.id) seed = Math.imul(seed ^ character.charCodeAt(0), 0x45d9f3b);
+  const expected = new SimulationEngine(seed >>> 0, stores);
+  expected.advance(inputs);
+  expected.advance(inputs);
+  assert.deepEqual(produced, expected.checkpoint);
+
+  // A sub-day call consumes the fresh snapshot without posting another request.
+  // A trade made after that consumption is the only change in the next request.
+  client.advanceRegions([{ ...region, inputs: { ...inputs, deltaDays: 0.125 } }]);
+  const tradedStores = { ...produced.stores, gold: produced.stores.gold + 4 };
+  client.advanceRegions([{ ...region, stores: tradedStores, inputs: { ...inputs, deltaDays: 0.125 } }]);
+  expected.setStores(tradedStores);
+  expected.advance({ ...inputs, deltaDays: 0.25 });
+  worker.deliver();
+  assert.deepEqual(client.getRegionSnapshot("island"), expected.checkpoint);
+});
+
+test("annual checkpoints wait for a completed worker snapshot", (t) => {
+  mockWorker(t, TestWorker);
+  const client = new SimulationClient(42, stores, 0);
+  const worker = TestWorker.latest;
+  worker.deliver();
+  const chronicle = new EventChronicle();
+  chronicle.checkpointSnapshot(client.drain()!);
+  client.advance({ ...inputs, deltaDays: 13 });
+  assert.deepEqual(chronicle.getCheckpoints().map((entry) => entry.year), [1]);
+  worker.deliver();
+  const completed = client.drain()!;
+  assert.equal(chronicle.checkpointSnapshot(completed), 2);
+  assert.ok(completed.elapsedDays >= 12);
+  assert.deepEqual(chronicle.getCheckpoints().map((entry) => entry.year), [1, 2]);
+  assert.equal(chronicle.getCheckpoints()[1].snapshot.elapsedDays, completed.elapsedDays);
 });
 
 test("an externally granted practice survives worker updates and crash recovery", (t) => {

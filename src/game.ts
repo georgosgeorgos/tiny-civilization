@@ -224,6 +224,7 @@ export class Game {
   private readonly simulation: SimulationClient;
   private readonly manifest: WorldManifest;
   private readonly chronicle: EventChronicle;
+  private lastChronicleCheckpointYear = 0;
   private readonly directiveHistory: string[] = [];
   private lastSimulationInputs: SimulationInputs | null = null;
   private readonly hardshipCredits = new Map<string, number>();
@@ -233,6 +234,7 @@ export class Game {
   private lastRunRender = 0;
   private projectedCheckpointDay: number | null = null;
   private lastRegionalSnapshots: ReadonlyMap<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>> = new Map();
+  private readonly lastAppliedRegionalSnapshots = new Map<string, Readonly<import("./simulation/types.ts").SimulationSnapshot>>();
   private lastOriginCrisis: string | null = null;
   private lastAlienPhase: string | null = null;
   private alienSignalBeacon: THREE.Mesh | null = null;
@@ -807,9 +809,10 @@ export class Game {
   }
 
   private downloadManifest(): void {
+    this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
     const completed = this.simulation.drain();
     if (completed) this.applySimulationSnapshot(completed);
-    this.captureChronicleCheckpoint(yearFromDays(this.simulation.snapshot.elapsedDays));
+    this.captureChronicleCheckpoint();
     const manifest = createWorldManifest(this.manifest.config, this.directiveHistory);
     const payload = serializeExperiment({
       manifest,
@@ -1093,6 +1096,7 @@ export class Game {
   private async advanceTimeStep(years: number): Promise<void> {
     if (this.worldRun) return;
     this.setObserverSpeed(0);
+    this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
     this.applySimulationSnapshot(this.simulation.useSynchronous());
     const run = new AbortController(); this.worldRun = run;
     const status = document.querySelector<HTMLElement>("#world-run-status");
@@ -2720,7 +2724,6 @@ export class Game {
         society.wood += 2;
       }
       this.setHint(`Year ${year} begins. Stores are counted and shared.`);
-      this.captureChronicleCheckpoint(year);
       this.advanceAges(year);
       this.transmitCulture();
       this.tickTechniqueDisruption();
@@ -3033,7 +3036,8 @@ export class Game {
     this.lastRegionalSnapshots = regionalSnapshots;
     for (const society of this.societies.values()) {
       const remote = regionalSnapshots.get(society.islandId);
-      if (!remote) continue;
+      if (!remote || this.lastAppliedRegionalSnapshots.get(society.islandId) === remote) continue;
+      this.lastAppliedRegionalSnapshots.set(society.islandId, remote);
       society.food = Math.min(55, remote.stores.food);
       society.gold = Math.min(140, remote.stores.gold);
       society.wood = Math.min(90, remote.stores.wood);
@@ -3142,6 +3146,7 @@ export class Game {
       this.lastAlienPhase = null;
     }
     this.trackNewTechniques(snapshot.innovations.techniques, "player");
+    if (yearFromDays(snapshot.elapsedDays) > this.lastChronicleCheckpointYear) this.captureChronicleCheckpoint(snapshot);
   }
 
   private trackNewTechniques(techniques: readonly string[], regionId: string): void {
@@ -3221,8 +3226,8 @@ export class Game {
     return 1;
   }
 
-  private captureChronicleCheckpoint(year = yearFromDays(this.simDays)): void {
-    this.chronicle.checkpoint(year, this.simulation.snapshot as import("./simulation/types.ts").SimulationSnapshot);
+  private captureChronicleCheckpoint(snapshot = this.simulation.snapshot): void {
+    this.lastChronicleCheckpointYear = this.chronicle.checkpointSnapshot(snapshot);
   }
 
   private persistTile(tile: Tile): void {
@@ -4380,6 +4385,7 @@ export class Game {
     if (!this.running) return;
     if (this.worldRun && performance.now() - this.lastRunRender < 500) { requestAnimationFrame(this.loop); return; }
     this.lastRunRender = performance.now();
+    this.simulation.setStores({ food: this.food, wood: this.wood, gold: this.gold });
     const completed = this.simulation.drain();
     if (completed) {
       this.applySimulationSnapshot(completed);
