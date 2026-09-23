@@ -1,5 +1,6 @@
 import type { SimulationSnapshot } from "./types.ts";
 import type { ChronicleEvent, ChronicleEventKind, ExperimentCheckpoint } from "./manifest.ts";
+import { yearFromDays } from "../time.ts";
 
 export type ChronicleMetrics = ChronicleEvent["metrics"];
 
@@ -52,6 +53,12 @@ export class EventChronicle {
     }
     this.checkpoints.push({ year, snapshot: structuredClone(snapshot) });
     if (this.checkpoints.length > 480) this.checkpoints.splice(0, this.checkpoints.length - 480);
+  }
+
+  checkpointSnapshot(snapshot: SimulationSnapshot): number {
+    const year = yearFromDays(snapshot.elapsedDays);
+    this.checkpoint(year, snapshot);
+    return year;
   }
 
   getEvents(): ChronicleEvent[] {
