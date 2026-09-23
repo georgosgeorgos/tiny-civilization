@@ -1,72 +1,32 @@
-import type { PersonRole } from "./models.ts";
-
-export type BirthCandidate = {
-  tileQ: number;
-  tileR: number;
-  tribe: boolean;
-  islandId: string;
-  societyName?: string;
-  role: PersonRole;
-};
-
 export type DeathRecord = {
   personIndex: number;
   name: string;
 };
 
-export type HungerExile = {
-  tribe: boolean;
-  islandId?: string;
-  societyName?: string;
-};
-
-export type PopulationContext = {
-  playerCitizenCount: number;
-  playerHousing: number;
-  food: number;
-  birthReadiness: number;
-  mortalityRisk: number;
-  householdBirthReadiness: number;
-  societies: ReadonlyMap<string, { islandId: string; name: string; food: number; populationCount: number; housing: number }>;
-};
-
-export function shouldBirth(ctx: PopulationContext): BirthCandidate | null {
-  if (
-    ctx.birthReadiness > 0.34 &&
-    ctx.householdBirthReadiness > 0.42 &&
-    ctx.playerCitizenCount < ctx.playerHousing &&
-    ctx.food > 4
-  ) {
-    return { tileQ: -1, tileR: -1, tribe: false, islandId: "0,0", role: "villager" };
-  }
-  for (const society of ctx.societies.values()) {
-    if (
-      society.food > society.populationCount * 1.7 &&
-      society.populationCount < society.housing &&
-      society.food > 4
-    ) {
-      return {
-        tileQ: -1,
-        tileR: -1,
-        tribe: true,
-        islandId: society.islandId,
-        societyName: society.name,
-        role: "villager",
-      };
-    }
-  }
-  return null;
+/** Annual births accumulate at a rate supported by adults, food, and household wellbeing.
+ * Unmet capacity does not bank a future baby boom. */
+export function annualBirths(context: {
+  reproductiveAdults: number; population: number; housing: number;
+  food: number; readiness: number; credit: number;
+}): { births: number; credit: number } {
+  const { reproductiveAdults, population, housing, food, readiness } = context;
+  const room = Math.max(0, Math.floor(housing - population));
+  if (reproductiveAdults < 2 || room === 0 || food < Math.max(4, population * 0.75) || readiness < 0.2) return { births: 0, credit: 0 };
+  const security = Math.min(1, food / Math.max(4, population * 2.5));
+  const expected = reproductiveAdults * 0.1 * security * Math.min(1, readiness);
+  const total = Math.max(0, context.credit) + expected;
+  const births = Math.min(room, Math.floor(total));
+  return { births, credit: births === room ? 0 : total - births };
 }
 
-export function shouldExileHungry(ctx: PopulationContext): HungerExile | null {
-  if (ctx.playerCitizenCount > 1 && ctx.mortalityRisk > 0.48) {
-    return { tribe: false };
-  }
-  for (const society of ctx.societies.values()) {
-    if (society.populationCount <= 1 || society.food >= 0.5) continue;
-    return { tribe: true, islandId: society.islandId, societyName: society.name };
-  }
-  return null;
+/** Hardship accumulates in person-years; a small village does not lose one
+ * resident every few simulation days simply for crossing a risk threshold. */
+export function hardshipLosses(context: { population: number; food: number; risk: number; years: number; credit: number }): { losses: number; credit: number } {
+  if (context.population === 0 || context.food >= context.population * 0.5) return { losses: 0, credit: 0 };
+  const expected = context.population * Math.max(0, Math.min(1, context.risk) - 0.25) * 0.18 * context.years;
+  const total = context.credit + expected;
+  const losses = Math.min(context.population, Math.floor(total));
+  return { losses, credit: total - losses };
 }
 
 export function computeDeaths(
@@ -74,21 +34,13 @@ export function computeDeaths(
   year: number,
   hash: (a: number, b: number) => number,
 ): DeathRecord[] {
-  const regionPop = new Map<string, number>();
-  for (const person of people) {
-    const key = person.tribe ? person.islandId : "player";
-    regionPop.set(key, (regionPop.get(key) ?? 0) + 1);
-  }
   const deaths: DeathRecord[] = [];
   for (let i = 0; i < people.length; i++) {
     const person = people[i]!;
-    if (person.age < 78) continue;
-    const regionKey = person.tribe ? person.islandId : "player";
-    if ((regionPop.get(regionKey) ?? 0) <= 6) continue;
-    const mortalityChance = 0.15 + (person.age - 78) * 0.08;
+    if (person.age < 60) continue;
+    const mortalityChance = Math.min(1, 0.015 * Math.exp((person.age - 60) / 9));
     if (hash(person.seed + year * 0.0037, year) < mortalityChance) {
       deaths.push({ personIndex: i, name: person.name });
-      regionPop.set(regionKey, (regionPop.get(regionKey) ?? 1) - 1);
     }
   }
   return deaths;

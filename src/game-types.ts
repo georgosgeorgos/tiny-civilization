@@ -134,12 +134,14 @@ export type CatastropheState = {
 
 export type Demographics = { children: number; adults: number; elders: number };
 
-export function computeDemographics(people: readonly Person[]): Demographics {
+export function computeDemographics(people: readonly { age: number }[]): Demographics {
+  let children = 0;
   let adults = 0;
   let elders = 0;
   for (const person of people) {
-    if (person.age >= 65) elders += 1;
+    if (person.age < 16) children += 1;
+    else if (person.age >= 65) elders += 1;
     else adults += 1;
   }
-  return { children: Math.round(adults * 0.28), adults, elders };
+  return { children, adults, elders };
 }

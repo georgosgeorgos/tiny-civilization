@@ -21,6 +21,8 @@ self.onmessage = (event: MessageEvent<SimulationRequest>) => {
   } else if (message.type === "advance-years" && engine) {
     engine.setStores(message.stores);
     engine.advanceYears(message.inputs, message.years);
+  } else if (message.type === "add-practice" && engine) {
+    engine.addPractice(message.practice);
   } else if (message.type === "advance-regions") {
     const snapshots = message.regions.map((region) => {
       let regional = regions.get(region.id);

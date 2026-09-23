@@ -134,6 +134,8 @@ export type SimulationInputs = {
   housing: number;
   annualProduction: Stores;
   buildings: Record<BuildingId, number>;
+  /** Active land uses; unused fields and workshops can lie fallow. */
+  workedBuildings?: Record<BuildingId, number>;
   moodPressure: number;
   /** Aggregate infrastructure keeps the model cheap while giving connected settlements real benefits. */
   infrastructure: { roads: number; ports: number; tradeRoutes: number };

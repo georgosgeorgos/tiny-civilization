@@ -129,6 +129,9 @@ export function evolvePracticesAndLanguage(current: CulturalState, context: Cult
   const ecologyGating = context.inputs.ecologyToCulture !== false;
 
   const slots: DiscoverySlot[] = [
+    // Everyday work can produce modest improvements even when no personality
+    // trait crosses a specialist threshold and the society is not in crisis.
+    { eligible: context.inputs.population >= 2 && context.inputs.annualProduction.food + context.inputs.annualProduction.wood > 0, bias: { food: 0.01, knowledge: 0.008 }, probability: 0.04 * (0.5 + traits.curiosity) },
     { eligible: traits.stewardship > 0.54 && (!ecologyGating || context.ecology.soil < 0.7), bias: { soil: 0.032, forest: 0.008 }, probability: 0.20 },
     { eligible: traits.cooperation > 0.56 && (!ecologyGating || scarcity > 0.25), bias: { food: 0.025, stability: 0.012 }, probability: 0.22 },
     { eligible: traits.mobility > 0.58 && context.inputs.infrastructure.ports + context.inputs.infrastructure.tradeRoutes > 0, bias: { water: 0.018, knowledge: 0.01 }, probability: 0.18 },

@@ -19,6 +19,8 @@ export class BasinView {
   private readonly markers: THREE.Object3D[] = [];
   private readonly observer: ResizeObserver;
   private readonly world: BasinWorld;
+  private readonly elevationMin: number;
+  private readonly elevationRange: number;
   private lastSeason = -1;
   private lastSelection = "";
   private layer: MapLayer = "landscape";
@@ -29,6 +31,9 @@ export class BasinView {
   constructor(canvas: HTMLCanvasElement, world: BasinWorld, select: (id: string) => void) {
     this.canvas = canvas;
     this.world = world;
+    const elevations = world.cells.map((cell) => cell.elevation);
+    this.elevationMin = Math.min(...elevations);
+    this.elevationRange = Math.max(0.001, Math.max(...elevations) - this.elevationMin);
     this.select = select;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
@@ -61,15 +66,17 @@ export class BasinView {
     this.resize();
   }
 
+  private elevation(value: number): number { return (value - this.elevationMin) / this.elevationRange; }
+
   private point(cellId: number, offset = 0): THREE.Vector3 {
     const cell = this.world.cells[cellId];
-    return new THREE.Vector3(cell.x - this.world.width / 2, cell.elevation * 7 + offset, cell.z - this.world.height / 2);
+    return new THREE.Vector3(cell.x - this.world.width / 2, this.elevation(cell.elevation) * 7 + offset, cell.z - this.world.height / 2);
   }
 
   private makeTerrain(world: BasinWorld): THREE.BufferGeometry {
     const vertices: number[] = [];
     const indices: number[] = [];
-    for (const cell of world.cells) vertices.push(cell.x - world.width / 2, cell.elevation * 7, cell.z - world.height / 2);
+    for (const cell of world.cells) vertices.push(cell.x - world.width / 2, this.elevation(cell.elevation) * 7, cell.z - world.height / 2);
     for (let z = 0; z < world.height - 1; z++) {
       for (let x = 0; x < world.width - 1; x++) {
         const i = z * world.width + x;
@@ -91,7 +98,7 @@ export class BasinView {
       if (cell.river) color.setHex(0x4a99b1);
       else if (this.layer === "fertility") color.setHSL(0.08 + cell.fertility * 0.23, 0.48, 0.65 - cell.fertility * 0.24);
       else if (this.layer === "forest") color.setHSL(0.25, 0.15 + cell.forest * 0.4, 0.79 - cell.forest * 0.49);
-      else color.setHSL(0.18 + cell.forest * 0.12, 0.24 + cell.fertility * 0.13, 0.68 - cell.forest * 0.28 - cell.elevation * 0.09);
+      else color.setHSL(0.18 + cell.forest * 0.12, 0.24 + cell.fertility * 0.13, 0.68 - cell.forest * 0.28 - this.elevation(cell.elevation) * 0.09);
       colors.setXYZ(cell.id, color.r, color.g, color.b);
     }
     colors.needsUpdate = true;
@@ -259,5 +266,6 @@ export class BasinView {
       material.dispose();
     });
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 }

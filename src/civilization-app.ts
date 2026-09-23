@@ -83,7 +83,6 @@ form?.addEventListener("submit", (event) => {
   }).toString());
   const config = configFromPrompt(String(data.get("world-prompt")), base);
   const params = new URLSearchParams({
-    mode: "legacy",
     resources: config.resources, temperament: config.temperament, goal: config.goal,
     auto: config.auto ? "on" : "off", speed: String(config.speed), technology: config.technology,
     style: config.visualStyle,

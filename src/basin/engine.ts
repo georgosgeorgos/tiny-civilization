@@ -1,3 +1,4 @@
+import { DEFAULT_PARAMETERS, validateParameters, type BasinParameters } from "./parameters.ts";
 import { SeededRandom } from "../simulation/random.ts";
 import { buildRoutes, generateBasin } from "./world.ts";
 import type { BasinEvent, BasinIntervention, BasinState, Good, Household, Livelihood, Settlement, Shipment, Stocks } from "./types.ts";
@@ -22,6 +23,7 @@ const validLivelihood = (value: unknown): value is Livelihood => value === "farm
 function validateSave(value: unknown): asserts value is BasinState {
   if (!isRecord(value)) throw new Error("Invalid basin save: expected an object.");
   const state = value as Partial<BasinState>;
+  if (state.parameters !== undefined) validateParameters(state.parameters);
   if (state.schema !== "tiny-civilization.basin/v1") throw new Error("Invalid basin save: unsupported schema.");
   if (!isInteger(state.seed) || state.seed < 0 || state.seed > 0xffffffff || !isInteger(state.season) || state.season < 0) throw new Error("Invalid basin save: seed or season is outside the supported range.");
   if (!state.world || state.world.seed !== state.seed || !Array.isArray(state.world.cells) || !Array.isArray(state.world.settlements)) throw new Error("Invalid basin save: world does not match its seed.");
@@ -103,6 +105,16 @@ function validateSave(value: unknown): asserts value is BasinState {
   }
   if (!state.history.length || state.history.length > 160 || state.history.at(-1)!.season !== state.season) throw new Error("Invalid basin save: incomplete history.");
 
+  if (state.archive !== undefined) {
+    const archive = state.archive;
+    if (!archive || !isInteger(archive.stride) || archive.stride < 4 || !Number.isInteger(Math.log2(archive.stride)) || !Array.isArray(archive.entries) || archive.entries.length > 512) throw new Error("Invalid basin save: malformed history archive.");
+    let previous = -1;
+    for (const entry of archive.entries) {
+      if (!entry || !isInteger(entry.season) || entry.season <= previous || entry.season > state.season || entry.season % archive.stride !== 0 || !isInteger(entry.population) || entry.population < 0 || !isFiniteNumber(entry.food) || entry.food < 0 || !isFiniteNumber(entry.trade) || entry.trade < 0 || !inRange(entry.wellbeing, 0, 1) || (entry.foodPrice !== undefined && (!isFiniteNumber(entry.foodPrice) || entry.foodPrice < 0)) || (entry.migration !== undefined && (!isInteger(entry.migration) || entry.migration < 0)) || (entry.forest !== undefined && !inRange(entry.forest, 0, 1))) throw new Error("Invalid basin save: malformed archived observation.");
+      previous = entry.season;
+    }
+  }
+
   if (state.interventions.length > 80) throw new Error("Invalid basin save: intervention history exceeds its retention limit.");
   let previousInterventionSeason = -1;
   for (const intervention of state.interventions) {
@@ -129,7 +141,9 @@ function validateSave(value: unknown): asserts value is BasinState {
 export class BasinEngine {
   private simulation: BasinState;
 
-  constructor(seed = 1337) {
+  constructor(seed = 1337, parameters?: BasinParameters) {
+    if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffffffff) throw new Error("Seed must be an integer from 0 to 4294967295.");
+    if (parameters) validateParameters(parameters);
     const world = generateBasin(seed);
     const random = new SeededRandom(seed ^ 0x9e3779b9);
     const settlements: Settlement[] = world.settlements.map((place, index) => ({
@@ -164,7 +178,8 @@ export class BasinEngine {
     const households: Household[] = [];
     for (let placeIndex = 0; placeIndex < settlements.length; placeIndex += 1) {
       const settlement = settlements[placeIndex]!;
-      const count = 34 + Math.floor(random.next() * 3);
+      const legacyCount = 34 + Math.floor(random.next() * 3);
+      const count = parameters?.householdsPerSettlement ?? legacyCount;
       const parcelIds = parcels.get(settlement.id)!;
       for (let index = 0; index < count; index += 1) {
         const livelihood: Livelihood = index % 10 < 6 ? "farmer" : index % 10 < 8 ? "woodcutter" : "toolmaker";
@@ -174,7 +189,7 @@ export class BasinEngine {
           size: 2 + Math.floor(random.next() * 3),
           livelihood,
           parcelId: parcelIds[index % parcelIds.length]!,
-          stocks: { food: round(8 + random.next() * 7), timber: round(2 + random.next() * 3), tools: round(0.8 + random.next() * 1.2) },
+          stocks: { food: round((8 + random.next() * 7) * (parameters?.startingFood ?? 1)), timber: round(2 + random.next() * 3), tools: round(0.8 + random.next() * 1.2) },
           coin: round(8 + random.next() * 10),
           wellbeing: 0.66,
           hardship: 0,
@@ -185,6 +200,7 @@ export class BasinEngine {
     this.simulation = {
       schema: "tiny-civilization.basin/v1",
       seed,
+      ...(parameters ? { parameters: { ...parameters } } : {}),
       season: 0,
       world,
       households,
@@ -194,6 +210,7 @@ export class BasinEngine {
       droughtUntil: 0,
       events: [],
       history: [],
+      archive: { stride: 4, entries: [] },
       interventions: [],
       nextEventId: 1,
       nextShipmentId: 1,
@@ -206,7 +223,8 @@ export class BasinEngine {
   get state(): Readonly<BasinState> { return this.simulation; }
 
   advance(seasons = 1): Readonly<BasinState> {
-    const turns = Math.max(0, Math.floor(seasons));
+    if (!Number.isSafeInteger(seasons) || seasons < 0 || !Number.isSafeInteger(this.simulation.season + seasons)) throw new Error("Seasons must be a nonnegative safe integer.");
+    const turns = seasons;
     for (let index = 0; index < turns; index += 1) this.advanceOne();
     return this.simulation;
   }
@@ -267,6 +285,7 @@ export class BasinEngine {
   }
 
   private produce(drought: boolean): void {
+    const parameters = this.simulation.parameters ?? DEFAULT_PARAMETERS;
     const cellById = new Map(this.simulation.world.cells.map((cell) => [cell.id, cell]));
     for (const household of this.simulation.households) {
       const settlement = this.settlement(household.settlementId)!;
@@ -275,7 +294,7 @@ export class BasinEngine {
       const dryness = drought ? 0.56 : 1;
       let amount = 0;
       if (household.livelihood === "farmer") {
-        amount = (3.3 + parcel.fertility * 4.2 + parcel.moisture * 2.1) * toolFactor * dryness;
+        amount = (3.3 + parcel.fertility * 4.2 + parcel.moisture * 2.1) * toolFactor * dryness * parameters.cropYield;
         household.stocks.food = round(household.stocks.food + amount);
         settlement.production.food = round(settlement.production.food + amount);
       } else if (household.livelihood === "woodcutter") {
@@ -387,10 +406,11 @@ export class BasinEngine {
   }
 
   private ecologyRegeneration(drought: boolean): void {
+    const parameters = this.simulation.parameters ?? DEFAULT_PARAMETERS;
     for (const cell of this.simulation.world.cells) {
-      cell.forest = clamp(round(cell.forest + (drought ? 0.003 : 0.012) * (0.35 + cell.moisture)), 0, 1);
+      cell.forest = clamp(round(cell.forest + (drought ? 0.003 : 0.012) * (0.35 + cell.moisture) * parameters.forestGrowth), 0, 1);
       cell.fertility = clamp(round(cell.fertility + (drought ? -0.004 : 0.003) * (0.4 + cell.moisture)), 0.05, 1);
-      cell.moisture = clamp(round(cell.moisture + (cell.river ? 0.012 : 0.004) - (drought ? 0.04 : 0.008)), 0.03, 1);
+      cell.moisture = clamp(round(cell.moisture + (cell.river ? 0.012 : 0.004) * parameters.rainfall - (drought ? 0.04 : 0.008)), 0.03, 1);
     }
   }
 
@@ -511,6 +531,14 @@ export class BasinEngine {
       migration,
       forest: round(forest),
     });
+    const archive = this.simulation.archive ??= { stride: 4, entries: [] };
+    if (this.simulation.season % archive.stride === 0) {
+      archive.entries.push({ ...this.simulation.history.at(-1)! });
+      if (archive.entries.length > 512) {
+        archive.stride *= 2;
+        archive.entries = archive.entries.filter((entry) => entry.season % archive.stride === 0);
+      }
+    }
     if (this.simulation.history.length > 160) this.simulation.history.splice(0, this.simulation.history.length - 160);
   }
 
