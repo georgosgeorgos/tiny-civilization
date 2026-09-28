@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   resolve: {
     // The package entry is one large prebuilt module. Source modules let Rollup
-    // share only the renderer features used by the two app modes.
+    // bundle only the renderer features the app uses.
     alias: [{ find: /^three$/, replacement: "three/src/Three.js" }],
   },
   server: {

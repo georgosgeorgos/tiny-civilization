@@ -1,17 +1,16 @@
 # Tiny Civilization
 
-An observer-driven civilization simulation. Start with a camp, farming village,
-city, or space habitat, set the council's priorities, and watch people build,
-raise children, trade, migrate, learn, and respond to changing land and weather.
-
 [![Check](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml/badge.svg)](https://github.com/georgosgeorgos/tiny-civilization/actions/workflows/check.yml)
 
-![Illustrated overview of how setup, a living world, the simulation engine, and council directives form a feedback loop](docs/civilization-overview.svg)
+![Illustration of hex-tile islands with a frontier camp, a farming village, and a city linked by trading boats, and a ring-shaped habitat orbiting in the sky above](docs/hero.jpg)
 
-The default app couples visible people and settlements to the research engine.
-The basin experiment has its own households, economy, and save format.
+A civilization simulation you observe rather than command. Choose how a society
+begins (a frontier camp, a farmers' village, an established city, or a
+deep-space habitat), then watch its people build, raise children, trade, migrate,
+learn, and respond to changing land and weather. You never place a building
+yourself: you write proposals to the council and decide how far to skip ahead.
 
-## Run locally
+## Quick start
 
 Requires Node.js 22.6 or newer and a browser with WebGL 2 support.
 
@@ -20,152 +19,113 @@ npm install
 npm run dev
 ```
 
-Open the URL printed by Vite, usually <http://localhost:5173>. Use **New world**
-to choose an origin, geography, starting stores, technology, and temperament.
-A fixed starting world can be opened with `?seed=91&origin=farmers&speed=0`.
-The seed reproduces initial conditions, not an evolved world or its interventions.
+Open the URL printed by Vite, usually <http://localhost:5173>. A world starts
+right away; **New world** begins a different one.
 
-## Civilization mechanics
+The world's seed is kept in the URL, so the same link reopens the same starting
+world. For example, `?seed=91&origin=farmers&speed=0` opens a paused farmers'
+village. A seed reproduces the initial conditions, not a world's later history
+or your interventions.
 
-- People have actual ages. Children depend on the settlement until age 16;
+## How to play
+
+1. **Choose a beginning.** **New world** offers four origins, four geographies
+   (continental, archipelago, shattered, or wild frontier), and a first aim:
+   prosper, endure a winter, or connect distant settlements. **Fine tune this
+   beginning** sets starting stores, technology, world temperament, visual
+   character, and pace. **Surprise me** picks for you, and an optional world
+   twist such as "a volatile, advanced frontier of strange ruins" adjusts the
+   setup.
+2. **Watch.** The council acts on its own. Drag to orbit, scroll to zoom, and
+   click to travel. The **Local**, **World**, **Universe**, and **Subatomic**
+   views change the scale, and the **Lens** menu follows the settlement, its
+   working lands, a citizen, a neighbor society, or the regional network. The
+   observer log records each significant decision, and its summary names what
+   is shaping the settlement now.
+3. **Propose a change.** Write what the council should prioritize, such as
+   `secure food, then favor trade`. Local rules turn the words into ordered
+   priorities: food, growth, wealth, culture, frontier, or balance. The same
+   box sets the pace (`speed 2x`, `pause`).
+4. **Skip ahead.** **+1 yr**, **+100 yr**, **+1000 yr**, and **Run … years**
+   simulate every person, building, and neighboring society in quarter-day
+   steps, with twelve simulation days per year. **Stop run** halts at a step
+   boundary, and the next run continues from there. Keep the page open;
+   rendering slows during long runs to leave time for the simulation.
+
+Writing a jump such as `advance 1 million years` runs a statistical projection
+instead, with the settlement's inputs held fixed. Unlike the year controls, it
+does not simulate each person and building.
+
+![The app after a 100-year run: an island settlement with fields and roads, surrounded by the observer log, resource bar, council proposal box, and time controls](docs/screenshot.jpg)
+
+## What the model simulates
+
+People and settlements on screen are coupled to the research engine in
+`src/simulation/`.
+
+- **People have actual ages.** Children depend on the settlement until age 16,
   working adults staff workplaces, and elders retire at 65. Births require
   reproductive adults, food, and housing. New houses add room, not free adults.
-- Labor follows local needs and available workers on each island. Food shortages
-  shift workers toward food production; empty buildings do not produce goods.
-- Councils build according to population and resources. Housing makes room for
+- **Labor follows local need.** Available workers on each island are assigned to
+  actual workplaces. Food shortages shift workers toward food production, and
+  empty buildings produce nothing.
+- **Councils build for their population and resources.** Housing makes room for
   growth, while food production and specialist work compete for limited labor.
-- Food scarcity causes losses in proportion to population and elapsed time.
-  Aging, migration, neighboring societies, and settlement collapse change who
-  lives in the world. Collapsed neighbors are not automatically refounded.
-- Farming and extraction pressure the land. Fallow land and forests can recover;
-  cultural effects are bounded so accumulated customs cannot destroy or restore
-  an entire ecosystem instantly. Practices can be learned again after losses.
-- Existing institutions, diplomacy, cultural lineages, and innovation continue
-  alongside the economy and generations.
+- **Scarcity costs lives.** Food shortages cause losses in proportion to
+  population and elapsed time. Aging, migration, neighboring societies, and
+  settlement collapse change who lives in the world. Collapsed neighbors are not
+  automatically refounded.
+- **The land keeps a record.** Farming and extraction wear it down; fallow land
+  and forests can recover. Cultural effects are bounded, so accumulated customs
+  cannot destroy or restore an entire ecosystem instantly, and practices lost in
+  a crisis can be learned again.
+- **Societies keep evolving.** Institutions, diplomacy, cultural lineages, and
+  innovation change alongside the economy and generations.
 
-The model uses twelve simulation days per year. **+1 yr**, **+100 yr**, **+1000 yr**,
-and **Run … years** advance the coupled world in quarter-day steps, including
-people, buildings, and neighboring societies. **Stop run** interrupts at a step
-boundary; a later run continues from that point. The page must remain open.
-Rendering slows during long runs to leave time for the simulation.
+This is a simplified exploratory model, not a calibrated historical prediction.
+Founding populations, household formation, and disease waves are abstracted
+rather than modeled in demographic or epidemiological detail.
 
-Written council directives change priorities, such as securing food or favoring
-trade. Very large written deep-time requests use a separate statistical
-projection with fixed settlement inputs; that projection does not simulate
-every person and building as the year controls do.
+## Optional AI council interpreter
 
-For optional AI interpretation of council proposals, expand **AI council
-interpreter** and enter your own [OpenRouter API key](https://openrouter.ai/keys).
-The default model is [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash)
-(`deepseek/deepseek-v4.1-flash`); its model ID can be changed in the panel.
-The app sends the proposal and a small summary of the current settlement
-directly to OpenRouter, then maps the response to existing council priorities.
-The app does not save the key to browser storage or exported files; clear the
-field to stop using it. OpenRouter usage may incur charges. Leave the key
-blank to use the local, offline directive rules.
+Local rules only recognize keywords. For freer proposals, expand **AI council
+interpreter** below the proposal box and paste your own
+[OpenRouter API key](https://openrouter.ai/keys). Proposals are then sent with
+a small settlement summary (year, people, housing, stores, and mood) directly
+from your browser to OpenRouter, and the reply is mapped onto the same council
+priorities.
 
-**Export chronicle** downloads research records and settlement-engine checkpoints.
-It is not a complete save/load system for the visible world. Those checkpoints
-preserve engine random state, cellular ecology, and fractional time. The model
-version is `research-foundation-3`; ecological and demographic rules differ from
-older runs. This is a simplified exploratory model, not a calibrated historical
-prediction. Founding populations, household formation, and disease waves are
-abstracted rather than detailed demographic or epidemiological models.
+- The default model is [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash)
+  (`deepseek/deepseek-v4.1-flash`); change the model ID in the panel to use another.
+- The key is not saved to browser storage or exported files. Clear the field to
+  stop using it.
+- If a request fails or times out, the app falls back to local rules.
+- OpenRouter usage may incur charges.
 
-## Optional basin experiment
+## Exporting a chronicle
 
-The separate three-community river-basin economy remains available at
-`?mode=basin` (for example, <http://localhost:5173/?mode=basin&seed=42>).
-It focuses on household stocks, paid trade, transport, taxes, and public works.
-Its households keep fixed sizes, so use the default civilization for generations.
-The following controls and portable saves apply only to the basin experiment.
-
-### Basin setup and long runs
-
-The basin starts paused. In **Set up a basin**, choose the seed, households per
-settlement (12–100), starting food, crop yield, rainfall, and forest regrowth.
-Click **Apply settings & start** to create and run that world. Applying settings
-replaces the current world; download **Save** first if you want to keep it.
-The seed URL reproduces terrain; use a save file to share custom parameters
-and the evolved world together.
-
-Use **Run for … years** for a longer run (up to 100,000 years per request), or
-**Play** for continuous observation. Every season is simulated in small batches;
-**Pause** interrupts a long run at a season boundary, and another run continues
-from there. Comparisons also run in cancellable batches and use the same initial
-parameters. Runtime depends on the number of households and years requested.
-
-A browser checkpoint is written about every five seconds while progressing,
-on pause, on completion, and when leaving the page. On your next visit, choose
-**Resume browser checkpoint** in setup. There is one checkpoint per browser
-origin; starting another basin replaces it. **Save** and **Load** provide portable
-JSON copies. If browser storage is unavailable, the checkpoint status tells you
-to save manually. The simulation does not run while the page is closed or your
-device sleeps; background tabs may run more slowly.
-
-Select **Whole history** to see a bounded, progressively coarser overview of the
-entire run, or **Recent seasons** for detail. The overview samples observations,
-not averages, and can miss brief events. Older saves start building that overview
-when resumed. Households currently keep their original sizes: long runs model
-economic and ecological change, not births, deaths, or generations.
-
-### Basin controls
-
-| Area | What it shows | What you can change |
-| --- | --- | --- |
-| 3D map | River, settlements, routes, cargo, fertility, and forest cover | Orbit, zoom, recenter, and switch map layers |
-| Settlement ledger | Population, wellbeing, council trust, stores, flows, prices, and livelihoods | Select a settlement and change its sales tax |
-| Public works | Treasury, bridge status, route time, and carrying capacity | Commission a bridge |
-| Timeline | Current year, season, rainfall state, food, population, wellbeing, trade, migration, prices, and forest history | Pause, change pace, choose a measure, or advance one or ten years |
-| Experiment controls | Current history versus an untouched run | Introduce a two-year drought or compare with no changes |
-| Chronicle | Trade, migration, work, weather, policy, and livelihood events | Expand **Why?** to inspect recorded causes |
-
-Use **Save** to download the complete basin as JSON. **Load** validates and
-restores households, cargo, ecology, public works, interventions, and history so
-the simulation can continue exactly.
-
-### Basin model
-
-![Illustrated river basin showing three trading settlements, seasonal feedback, observer controls, and comparisons](docs/basin-overview.svg)
-
-Each simulated season follows a fixed sequence:
-
-1. Deliver cargo whose route time has elapsed.
-2. Produce goods and consume household food.
-3. Clear local markets and fund public works.
-4. Regenerate or degrade forest, fertility, and moisture.
-5. Rebuild routes, dispatch regional trade, and move households under sustained
-   hardship.
-6. Record aggregate observations and causal events for the interface.
-
-### Basin reproducibility
-
-The basin is deterministic for the same seed, actions, and step schedule. Save
-files contain the authoritative state and survive JSON serialization. The app
-retains the latest 160 seasonal observations, 120 causal events, and 80
-interventions, plus at most 512 long-term observations.
-
-The counterfactual comparison starts a fresh engine with the same seed and parameters and runs
-it to the current season without interventions. It measures the combined effect
-of the changed history; it does not isolate one policy when several interventions
-were made.
+**Export chronicle** downloads the research records and settlement-engine
+checkpoints, which preserve the engine's random state, cellular ecology, and
+fractional time. It is a record of the run, not a complete save of the visible
+world. Exports carry the model version `research-foundation-3`; its ecological
+and demographic rules differ from older runs.
 
 ## Project structure
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Selects the default civilization or the optional basin |
-| `src/civilization-app.ts` and `src/civilization.html` | Set up the default app and its interface |
+| `src/main.ts` | Browser entry point |
+| `src/civilization-app.ts` and `src/civilization.html` | App setup and interface |
 | `src/game.ts` | Visible world, people, councils, settlements, and browser lifecycle |
 | `src/population.ts` | Births, aging mortality, and food-shortage losses |
+| `src/directive.ts` and `src/openrouter.ts` | Local proposal rules and the optional AI interpreter |
 | `src/simulation/labor.ts` | Assigns available adults to actual workplaces |
 | `src/simulation/world-run.ts` | Cancellable advancement of the coupled world |
 | `src/simulation/` | Settlement ecology, culture, institutions, and research engine |
-| `src/basin/` | Separate household and river-basin experiment |
 | `docs/research/` | Design proposals, technical specs, and review notes |
 
-The [research document index](docs/research/README.md) distinguishes proposals
-from current behavior; use this README and the code for the running model.
+The [research document index](docs/research/README.md) separates proposals from
+current behavior; use this README and the code for the running model.
 
 ## Development
 
@@ -178,6 +138,6 @@ npm run preview  # serve the production build locally
 ```
 
 The production build is written to `dist/`. CI runs `npm ci` followed by
-`npm run check` for pushes and pull requests. The supplementary balance scenarios
-can be run with `node --experimental-strip-types src/simulation/balance-test.ts`;
-they are diagnostics, not evidence of historical calibration.
+`npm run check` on pushes and pull requests. Supplementary balance scenarios run
+with `node --experimental-strip-types src/simulation/balance-test.ts`; they are
+diagnostics, not evidence of historical calibration.
