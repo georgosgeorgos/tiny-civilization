@@ -1,23 +1,5 @@
-const root = document.querySelector<HTMLElement>("#app");
-if (!root) throw new Error("Missing app root");
-const appRoot = root;
+import markup from "./civilization.html?raw";
 
-async function start(): Promise<void> {
-  const url = new URL(window.location.href);
-  if (url.searchParams.get("mode") !== "basin") {
-    const { default: markup } = await import("./civilization.html?raw");
-    document.body.innerHTML = markup;
-    await import("./civilization-app");
-    return;
-  }
-
-  const rawSeed = url.searchParams.get("seed");
-  const seed = rawSeed?.trim() && Number.isSafeInteger(Number(rawSeed))
-    ? Number(rawSeed) >>> 0 : crypto.getRandomValues(new Uint32Array(1))[0];
-  url.searchParams.set("seed", String(seed));
-  window.history.replaceState(null, "", url);
-  const { BasinApp } = await import("./basin/app");
-  new BasinApp(appRoot, seed);
-}
-
-void start();
+// The app queries its markup at import time, so insert the markup first.
+document.body.innerHTML = markup;
+void import("./civilization-app");
